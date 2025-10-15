@@ -25,6 +25,8 @@
   <div id="recordArea" class="container">
     <div class="top">
       <canvas id="radarChart"></canvas>
+      <!-- ドロワーメニューボタン -->
+      <button id="drawerBtn" class="drawer-btn">☰</button>
     </div>
     
     <div class="bottom">
@@ -57,6 +59,9 @@
 
     <button id="menuBtn">メニュー</button>
 
+    <!-- ポモドーロ用ドロワー（左上） -->
+    <!-- NOTE: drawer をここから移動しました（親が display:none のとき開かないため） -->
+
     <div id="gameMenu" style="display:none; margin-top:20px; border:1px solid #ccc; padding:10px;">
       <button id="assignCategoryBtn">カテゴリ割り当て</button>
       <button id="resetProgressBtn">セーブデータ消去</button>
@@ -77,6 +82,33 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- ポモドーロ用ドロワー（左上） - 常に DOM に置く -->
+  <div id="drawer" class="drawer" aria-hidden="true">
+    <div class="drawer-header">
+      <strong>タイマー設定</strong>
+      <button id="closeDrawerBtn">✕</button>
+    </div>
+
+    <div class="drawer-body">
+      <label>作業時間 (分)
+        <input id="pomodoroWork" type="number" min="1" />
+      </label>
+
+      <label>休憩時間 (分)
+        <input id="pomodoroBreak" type="number" min="1" />
+      </label>
+
+      <label>長休憩 (分)
+        <input id="pomodoroLong" type="number" min="1" />
+      </label>
+
+      <div class="drawer-actions">
+        <button id="savePomodoroBtn">保存</button>
+        <button id="resetPomodoroBtn">デフォルト</button>
+      </div>
+    </div>
+  </div>
+
   <script src="script.js"></script>
   <script>
     if ('serviceWorker' in navigator) {

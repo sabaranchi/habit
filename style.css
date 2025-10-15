@@ -59,6 +59,237 @@ button {
   margin: 2px;
 }
 
+/* ドロワー用 */
+.drawer-btn {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  z-index: 5000;
+  background: #ffffffcc;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.drawer {
+  position: fixed;
+  left: 0;
+  top: 0;
+  height: 100vh;
+  width: 300px;
+  max-width: 80vw;
+  background: #fff;
+  box-shadow: 2px 0 8px rgba(0,0,0,0.1);
+  transform: translateX(-110%);
+  transition: transform 0.25s ease;
+  z-index: 4000;
+  padding: 12px;
+}
+
+.drawer.open {
+  transform: translateX(0%);
+}
+
+/* ドロワーが開いているとき、外側ボタンが X に変わるので内部の close ボタンを隠す余白を作る */
+.drawer.open .drawer-header {
+  padding-left: 56px; /* 左に外側ボタン分の余白を確保 */
+}
+
+.drawer-header button {
+  background: transparent;
+  border: none;
+  font-size: 16px;
+}
+
+/* ポモドーロタイマーのスタイル（カテゴリ行内で表示） */
+.pomodoro-timer {
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:6px;
+  width:100%;
+}
+.pomodoro-header {
+  font-weight:bold;
+}
+.pomodoro-clock {
+  font-size:76px; /* 時計をさらに大きく */
+  font-weight: 300;
+  background:#222;
+  color:#fff;
+  padding:18px 28px; /* 黒ボックスを大きくする */
+  border-radius:12px;
+  min-width: 240px;
+  text-align: center;
+  box-shadow: inset 0 -6px 10px rgba(0,0,0,0.15);
+}
+.pomodoro-controls button {
+  padding:6px 10px;
+  font-size:13px;
+  border-radius:6px;
+  background: #fff;
+  border: 1px solid #bbb;
+  min-width: 80px;
+}
+
+.pomodoro-controls {
+  display:flex;
+  gap:8px;
+  margin-top:12px;
+  justify-content:center;
+}
+
+/* モーダル内のコンテンツをモーダル枠いっぱいに広げるレイアウト調整 */
+.overlay .modal .pomodoro-timer {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 12px;
+}
+
+/* 時計をモーダル内でできるだけ大きく表示（枠に合わせる） */
+.overlay .modal .pomodoro-clock {
+  font-size: calc(min(14vw, 84px)); /* ビューポートと最大ピクセルの両方を考慮 */
+  padding: 12px 18px;
+  border-radius: 10px;
+  min-height: 1.2em;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* コントロールは小さくして下端に固定、横並びで中央寄せ */
+.overlay .modal .pomodoro-controls {
+  margin-top: 8px;
+  justify-content: center;
+  align-items: center;
+}
+.overlay .modal .pomodoro-controls button {
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 6px;
+  background: #fff;
+  border: 1px solid #bbb;
+  min-width: 84px;
+}
+
+/* モバイル時は時計を少し小さめにして枠に収める */
+/* タイマー中心の見栄えを向上 */
+.pomodoro-timer.global .pomodoro-header {
+  font-size:18px;
+  margin-bottom:8px;
+}
+
+/* モーダル内で時計を中央かつ目立たせる */
+.overlay .modal {
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+}
+
+/* モバイル調整: モーダル枠の幅は変えずに、時計を縦に大きく・数字を見やすくする */
+@media (max-width:700px) {
+  /* モーダル枠の min-width は維持して、内側の余白を少し削る */
+  .overlay .modal { min-width: 300px; padding: 10px 10px; }
+
+  /* 時計を縦に大きくして数字も大きく表示（枠内で最大限） */
+  .overlay .modal .pomodoro-clock {
+    font-size: 58px; /* 大きめの数字 */
+    padding: 18px 12px; /* 縦余白を増やして高さを出す */
+    min-height: 72px;
+    border-radius: 8px;
+  }
+
+  /* ボタンは小さめにして横並びを維持 */
+  .overlay .modal .pomodoro-controls button {
+    min-width: 68px;
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+}
+
+/* チャート暗転 */
+.top.dimmed {
+  position: relative;
+}
+.top.dimmed::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,0.35);
+  pointer-events: none;
+}
+
+.pomodoro-timer.global {
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  min-height: 160px;
+}
+
+/* 全画面オーバーレイ（タイマー中に全操作をブロック） */
+.overlay {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.overlay .modal {
+  background: #fff;
+  padding: 20px 18px; /* 少し縦余白を増やす */
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+  min-width: 300px; /* 時計を大きくしても収まる幅 */
+}
+
+/* overlay 上では他のボタンを透過させないために pointer-events を無効化 */
+.no-interact {
+  pointer-events: none !important;
+}
+
+/* タイマー内のコントロールだけは有効にする */
+.overlay .modal button {
+  pointer-events: auto;
+}
+
+.drawer-header {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  margin-bottom:8px;
+}
+
+.drawer-body label {
+  display:block;
+  margin:8px 0;
+}
+
+.drawer-body input {
+  width: 80px;
+  margin-left:8px;
+}
+
+.drawer-actions {
+  margin-top:12px;
+  display:flex;
+  gap:8px;
+}
+
 /* PC/タブレット（従来どおりフレックス横並び） */
 .score-row {
   display: flex;

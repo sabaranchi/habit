@@ -1,16 +1,8 @@
 let categories = JSON.parse(localStorage.getItem("categories")) || [];
 let scores = JSON.parse(localStorage.getItem("scores")) || {};
 let statusPoints = JSON.parse(localStorage.getItem("statusPoints")) || {}; // ステータス用ポイント（別管理）
-let weeklyMissions = JSON.parse(localStorage.getItem("weeklyMissions")) || {}; // {カテゴリ: {target: 数値, progress: 数値, lastCheck: タイムスタンプ}}
-let missionPoints = JSON.parse(localStorage.getItem("missionPoints")) || {}; // ミッションなどで得られるポイント（スコアとは別）
-if (!weeklyMissions) {
-  weeklyMissions = {};
-}
-categories.forEach(cat => {
-  if (!weeklyMissions[cat]) {
-    weeklyMissions[cat] = { target: "", cleared: null };
-  }
-});
+// ポモドーロ設定を localStorage で保持
+let pomodoro = JSON.parse(localStorage.getItem("pomodoro")) || { work: 25, break: 5, long: 15 };
 let pastScores = JSON.parse(localStorage.getItem("pastScores")) || {};
 let lastWeek = localStorage.getItem("lastUpdatedWeek");
 let playerLevel = parseInt(localStorage.getItem("playerLevel") || "0");
@@ -38,6 +30,8 @@ let statusMultipliers = JSON.parse(localStorage.getItem("statusMultipliers")) ||
 
 let savePoint = 0;      // 最高到達ステージ (中ボスごと)
 let dailyLog = JSON.parse(localStorage.getItem("dailyLog")) || {};
+// missionPoints はミッション機能削除により基本使わないが、calculateStatus が参照するため安全な初期化
+let missionPoints = {};
 
 function getCurrentWeek() {
   const date = new Date();
@@ -45,6 +39,16 @@ function getCurrentWeek() {
   const dayNr = (date.getDay() + 6) % 7; // 月曜始まりに変換（0=月曜）
   target.setDate(target.getDate() - dayNr + 3); // 木曜基準に調整
 
+  const firstThursday = new Date(target.getFullYear(), 0, 4);
+  const weekNumber = Math.ceil(((target - firstThursday) / 86400000 + 1) / 7);
+  return weekNumber;
+}
+
+// 指定日付の週番号を算出（getCurrentWeek と同じロジックを任意日付で使う）
+function getWeekNumberForDate(dateObj) {
+  const target = new Date(dateObj.valueOf());
+  const dayNr = (dateObj.getDay() + 6) % 7;
+  target.setDate(target.getDate() - dayNr + 3);
   const firstThursday = new Date(target.getFullYear(), 0, 4);
   const weekNumber = Math.ceil(((target - firstThursday) / 86400000 + 1) / 7);
   return weekNumber;
@@ -66,7 +70,6 @@ function save() {
   localStorage.setItem("scores", JSON.stringify(scores));
   localStorage.setItem("statusPoints", JSON.stringify(statusPoints));
   localStorage.setItem("categoryTargets", JSON.stringify(categoryTargets));
-  localStorage.setItem("weeklyMissions", JSON.stringify(weeklyMissions));
   localStorage.setItem("playerLevel", playerLevel);
   localStorage.setItem("categoryToStatus", JSON.stringify(categoryToStatus)); // ← 追加
 }
@@ -81,7 +84,7 @@ function addCategory() {
   categories.push(name);
   scores[name] = 0;
   statusPoints[name] = 0; // ステータス初期化
-  weeklyMissions[name] = { target: "", cleared: null, lastCheckWeek: getCurrentWeek() }; // ミッション初期化
+  // ミッション機能を削除したため初期化処理は不要
 
   input.value = "";
   save();
@@ -96,7 +99,6 @@ function deleteCategories() {
   for (let t of targets) {
     delete scores[t];
     delete statusPoints[t];
-    delete weeklyMissions[t];
   }
   save();
   render();
@@ -109,7 +111,6 @@ function updateScore(cat, delta) {
   dailyLog[today][cat] = (dailyLog[today][cat] || 0) + delta;
   localStorage.setItem("dailyLog", JSON.stringify(dailyLog));
   recalcLevel();
-  renderStatus();  // ステータス再描画
   save();
   render();
 }
@@ -133,21 +134,7 @@ function renameCategory(oldName) {
     delete pastScores[oldName];
   }
 
-  newName.onclick = () => {
-    const input = document.createElement("input");
-    input.type = "text";
-    input.value = weeklyMissions[cat].target || "";
-    input.className = "mission-label";
-    input.style.width = "100px";
-    input.onblur = () => {
-      weeklyMissions[cat] = weeklyMissions[cat] || {};
-      weeklyMissions[cat].target = input.value;
-      save();
-      render(); // 再描画で戻す
-    };
-    newName.replaceWith(input);
-    input.focus();
-  };
+  // ...existing code... (old rename handler removed)
   save();
   render();
 }
@@ -181,10 +168,6 @@ function enableEdit(labelElement, oldName) {
       delete statusPoints[oldName];
     }
 
-    if (weeklyMissions?.[oldName] !== undefined) {
-      weeklyMissions[newName] = weeklyMissions[oldName];
-      delete weeklyMissions[oldName];
-    }
 
     save();
     render(); // ← ラベルに戻す
@@ -267,50 +250,17 @@ function render() {
     minus.className = "zoom-safe-button";
     minus.onclick = () => updateScore(cat, -1);
 
-    const plus = document.createElement("button");
-    plus.textContent = "＋";
-    plus.className = "zoom-safe-button";
-    plus.onclick = () => updateScore(cat, 1);
+  const plus = document.createElement("button");
+  plus.textContent = "＋";
+  plus.className = "zoom-safe-button";
+  plus.onclick = () => startPomodoroForCategory(cat);
 
     const buttonGroup = document.createElement("div");
     buttonGroup.className = "score-buttons";
     buttonGroup.append(minus, plus);
 
-    // ミッション表示ラベル（編集可能）
-    if (!weeklyMissions[cat]) {
-      weeklyMissions[cat] = { target: "", cleared: null };
-    }
-
-    const missionLabel = document.createElement("span");
-    missionLabel.className = "mission-label";
-    missionLabel.textContent = weeklyMissions[cat].target || "ミッション未設定";
-    missionLabel.onclick = () => {
-      const input = document.createElement("input");
-      input.type = "text";
-      input.value = weeklyMissions[cat].target || "";
-      input.className = "mission-label";
-      input.style.width = "100px";
-      input.onblur = () => {
-        weeklyMissions[cat].target = input.value;
-        save();
-        render();
-      };
-      missionLabel.replaceWith(input);
-      input.focus();
-    };
-
-    // チェックボックス
-    const missionCheck = document.createElement("input");
-    missionCheck.type = "checkbox";
-    missionCheck.className = "mission-check";
-    missionCheck.checked = weeklyMissions[cat]?.cleared || false;
-    missionCheck.addEventListener("change", (e) => {
-      weeklyMissions[cat].cleared = e.target.checked;
-      save();
-    });
-
     // 要素追加（順番が重要）
-    div.append(scoreLabel, targetDisplay, buttonGroup, missionLabel, missionCheck);
+    div.append(scoreLabel, targetDisplay, buttonGroup);
     list.appendChild(div);
   }
 
@@ -333,6 +283,8 @@ function render() {
 
   updateChart();
   renderCalendar(); // ← これを追加
+  // ステータス表示を最新化
+  try { renderStatus(); } catch(e) { /* ignore */ }
 }
 
 const menuBtn = document.getElementById("menuBtn");
@@ -355,26 +307,11 @@ closeMenuBtn.onclick = () => {
 //カテゴリ割り当て
 document.getElementById("assignCategoryBtn").onclick = renderAssignCategories;
 
-async function askMissionClearStatus() {
-  for (let cat of categories) {
-    const mission = weeklyMissions[cat];
-    if (!mission || !mission.target) continue;
-    if (mission.cleared !== null) continue; // すでに回答済み
-
-    const answer = prompt(`【${cat}】のミッション\n「${mission.target}」\nクリアしましたか？\n(はい: y / いいえ: n)`);
-    if (answer === null || answer.toLowerCase() !== 'y') {
-      mission.cleared = false;
-    } else {
-      mission.cleared = true;
-    }
-    save();
-  }
-}
+// askMissionClearStatus removed (mission system deprecated)
 
 async function goToGame() {
   document.getElementById("recordArea").style.display = "none";
   document.getElementById("gameArea").style.display = "block";
-  await askMissionClearStatus();
   renderStatus();
 }
 
@@ -389,46 +326,22 @@ function calculateStatus() {
   for (const stat of statusNames) {
     const cat = statusPoints[stat];
     if (!cat || !categories.includes(cat)) {
-      statusPoints[stat] = 0; // 未割り当ては0
-    } else {
-      // 各カテゴリのスコア + ミッションポイントを合計してステータスにする
-      const score = scores[cat] || 0;
-      const mp = missionPoints[cat] || 0;
-      const multiplier = statusMultipliers[stat] || 1;
-
-      // スコア + ミッションポイント に倍率をかける
-      result[stat] = Math.floor((score + mp) * multiplier);
-
+      // 未割り当ては 0
+      result[stat] = 0;
+      continue;
     }
+    // 各カテゴリのスコア + ミッションポイントを合計してステータスにする
+    const score = scores[cat] || 0;
+    const mp = missionPoints[cat] || 0;
+    const multiplier = statusMultipliers[stat] || 1;
+
+    // スコア + ミッションポイント に倍率をかける
+    result[stat] = Math.floor((score + mp) * multiplier);
   }
   return result;
 }
 
-function checkWeekRollover() {
-  const currentWeek = getCurrentWeek();
-  if (lastWeek && lastWeek !== currentWeek.toString()) {
-    for (let cat of categories) {
-      const mission = weeklyMissions[cat];
-      if (!mission) continue;
-
-      // ミッション結果でステータスポイントに加算/減算
-      if (mission.cleared === true) {
-        missionPoints[cat] = (missionPoints[cat] || 0) + 3;
-      } else {
-        missionPoints[cat] = Math.max(0, (missionPoints[cat] || 0) - 5);
-      }
-     
-      // ミッション状態リセット
-      weeklyMissions[cat].cleared = null;
-      weeklyMissions[cat].lastCheckWeek = currentWeek;
-    }
-    alert("週が変わったのでミッション結果を反映しました！");
-    save();
-    recalcLevel();
-  }
-  lastWeek = currentWeek.toString();
-  localStorage.setItem("lastUpdatedWeek", lastWeek);
-}
+// Legacy weekly mission rollover removed
 
 function renderAssignCategories() {
   assignCategoryArea.style.display = "block"; // ここを必ず表示
@@ -916,8 +829,56 @@ let chart;
 function updateChart() {
   const ctx = document.getElementById("radarChart").getContext("2d");
   const labels = categories;
-  const values = labels.map((l) => scores[l] || 0);
-  const pastValues = labels.map((l) => pastScores[l] || 0);
+  // Ensure numeric values and handle different shapes for pastScores
+  const values = labels.map((l) => Number(scores[l] || 0));
+
+  // pastScores may be stored as a flat map {cat: val} or a nested map {date: {cat:val}}
+  function getPastVal(label) {
+    if (!pastScores) return 0;
+    // direct match
+    if (pastScores[label] !== undefined) return Number(pastScores[label]) || 0;
+    // if pastScores looks like { "2025-10-12": { cat: val, ... } }, try to find category inside
+    const keys = Object.keys(pastScores);
+    for (const k of keys) {
+      const v = pastScores[k];
+      if (v && typeof v === 'object' && v[label] !== undefined) return Number(v[label]) || 0;
+    }
+    return 0;
+  }
+
+  let pastValues = labels.map((l) => getPastVal(l));
+
+  // フォールバック：pastScores が空の場合は「1週間前の状態」を計算する。
+  // 方法: 今のスコアから「今週の増分」を引くことで、週の最初（=一つ前の週の状態）を得る。
+  const hasPast = Object.keys(pastScores || {}).length > 0;
+  if (!hasPast) {
+    // 今週の増分を dailyLog から集計
+    const thisWeek = getCurrentWeek();
+    const thisWeekAgg = {};
+    for (const [dateStr, entry] of Object.entries(dailyLog || {})) {
+      try {
+        const dt = new Date(dateStr);
+        const w = getWeekNumberForDate(dt);
+        if (w === thisWeek) {
+          for (const [cat, val] of Object.entries(entry || {})) {
+            thisWeekAgg[cat] = (thisWeekAgg[cat] || 0) + Number(val || 0);
+          }
+        }
+      } catch (e) {
+        // invalid date - ignore
+      }
+    }
+
+    // 1週間前の状態 = 現在のスコア - 今週の増分
+    const oneWeekAgo = {};
+    for (const l of labels) {
+      const curr = Number(scores[l] || 0);
+      const delta = Number(thisWeekAgg[l] || 0);
+      oneWeekAgo[l] = Math.max(0, curr - delta);
+    }
+
+    pastValues = labels.map((l) => oneWeekAgo[l]);
+  }
 
   if (chart) chart.destroy();
 
@@ -954,7 +915,9 @@ function updateChart() {
 }
 
 checkWeekRollover();
+checkWeekRollover();
 render();
+updateChart();
 
 
 /*
@@ -963,3 +926,277 @@ render();
 
 
 */
+
+// ----------------------
+// ドロワー（ポモドーロ設定）
+// ----------------------
+document.addEventListener('DOMContentLoaded', () => {
+  const drawerBtn = document.getElementById('drawerBtn');
+  const drawer = document.getElementById('drawer');
+  const closeDrawerBtn = document.getElementById('closeDrawerBtn');
+  const saveBtn = document.getElementById('savePomodoroBtn');
+  const resetBtn = document.getElementById('resetPomodoroBtn');
+
+  const inpWork = document.getElementById('pomodoroWork');
+  const inpBreak = document.getElementById('pomodoroBreak');
+  const inpLong = document.getElementById('pomodoroLong');
+
+  function openDrawer() {
+    drawer.classList.add('open');
+    drawer.setAttribute('aria-hidden', 'false');
+    // 現在値を反映
+    inpWork.value = pomodoro.work;
+    inpBreak.value = pomodoro.break;
+    inpLong.value = pomodoro.long;
+  }
+
+  function closeDrawer() {
+    drawer.classList.remove('open');
+    drawer.setAttribute('aria-hidden', 'true');
+  }
+
+  // トグル機能: 外側ボタンを同じ位置で開閉に使う
+  function toggleDrawer() {
+    if (!drawer) return;
+    if (drawer.classList.contains('open')) {
+      // 閉じる
+      closeDrawer();
+      if (drawerBtn) {
+        drawerBtn.textContent = '☰';
+        drawerBtn.setAttribute('aria-expanded', 'false');
+      }
+      if (closeDrawerBtn) closeDrawerBtn.style.display = '';
+    } else {
+      // 開く
+      openDrawer();
+      if (drawerBtn) {
+        drawerBtn.textContent = '✕';
+        drawerBtn.setAttribute('aria-expanded', 'true');
+      }
+      if (closeDrawerBtn) closeDrawerBtn.style.display = 'none';
+    }
+  }
+
+  if (drawerBtn) drawerBtn.addEventListener('click', toggleDrawer);
+  if (closeDrawerBtn) closeDrawerBtn.addEventListener('click', () => {
+    closeDrawer();
+    if (drawerBtn) {
+      drawerBtn.textContent = '☰';
+      drawerBtn.setAttribute('aria-expanded', 'false');
+    }
+    if (closeDrawerBtn) closeDrawerBtn.style.display = '';
+  });
+
+  if (saveBtn) saveBtn.addEventListener('click', () => {
+    pomodoro.work = Math.max(1, Number(inpWork.value) || 25);
+    pomodoro.break = Math.max(1, Number(inpBreak.value) || 5);
+    pomodoro.long = Math.max(1, Number(inpLong.value) || 15);
+    localStorage.setItem('pomodoro', JSON.stringify(pomodoro));
+    alert('ポモドーロ設定を保存しました');
+    closeDrawer();
+  });
+
+  if (resetBtn) resetBtn.addEventListener('click', () => {
+    pomodoro = { work: 25, break: 5, long: 15 };
+    localStorage.setItem('pomodoro', JSON.stringify(pomodoro));
+    inpWork.value = pomodoro.work;
+    inpBreak.value = pomodoro.break;
+    inpLong.value = pomodoro.long;
+    alert('デフォルトにリセットしました');
+  });
+});
+
+// ----------------------
+// カテゴリ単位のポモドーロ処理
+// ----------------------
+let pomodoroTimer = null;
+let pomodoroState = null; // { cat, phase: 'work'|'break', remaining }
+
+function startPomodoroForCategory(cat) {
+  if (pomodoroTimer) return alert('既にタイマーが動作中です');
+  // 保存されている設定を読み込む
+  const p = JSON.parse(localStorage.getItem('pomodoro')) || pomodoro;
+  showGlobalTimerUI(cat, p);
+}
+
+function showGlobalTimerUI(cat, p) {
+  const list = document.getElementById('categoryList');
+  if (!list) return alert('カテゴリ一覧が見つかりません');
+
+  // 保存しておく（復元用）
+  list.dataset._original = list.innerHTML;
+
+  // オーバーレイを表示（これで他操作を遮断）
+  showOverlay(cat);
+
+  // チャートを暗く（補助）
+  const topArea = document.querySelector('.top');
+  if (topArea) topArea.classList.add('dimmed');
+
+  // 初期状態
+  pomodoroState = {
+    cat,
+    phase: 'work',
+    remaining: (Number(p.work) || 25) * 60,
+    workSec: (Number(p.work) || 25) * 60,
+    breakSec: (Number(p.break) || 5) * 60
+  };
+
+  pomodoroTimer = setInterval(() => tickGlobalTimer(), 1000);
+  tickGlobalTimer();
+}
+
+function tickGlobalTimer() {
+  if (!pomodoroState) return;
+  pomodoroState.remaining -= 1;
+  const min = Math.floor(pomodoroState.remaining / 60);
+  const sec = pomodoroState.remaining % 60;
+  const clock = document.getElementById('pomodoroClock');
+  if (clock) clock.textContent = `${String(min).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+
+  if (pomodoroState.remaining <= 0) {
+    if (pomodoroState.phase === 'work') {
+      // work 終了 -> break に移行
+      playBeep();
+      pomodoroState.phase = 'break';
+      pomodoroState.remaining = pomodoroState.breakSec;
+      logBattle(`${pomodoroState.cat} の作業が終了しました。休憩に入ります。`);
+    } else {
+      // break 終了 -> セッション完了
+      playBeep();
+      clearInterval(pomodoroTimer);
+      pomodoroTimer = null;
+      logBattle(`${pomodoroState.cat} のポモドーロが完了しました！`);
+      const completedCat = pomodoroState.cat;
+      pomodoroState = null;
+      closeGlobalTimerUI(true, completedCat);
+    }
+  }
+}
+
+function closeGlobalTimerUI(grantPoint, completedCat) {
+  const list = document.getElementById('categoryList');
+  if (!list) return;
+  // チャートのダーク解除
+  const topArea = document.querySelector('.top');
+  if (topArea) topArea.classList.remove('dimmed');
+
+  // 元の内容に戻す
+  const orig = list.dataset._original;
+  if (orig !== undefined) {
+    list.innerHTML = orig;
+    delete list.dataset._original;
+  }
+
+  // ポイント付与
+  if (grantPoint && completedCat) {
+    updateScore(completedCat, 1);
+  } else {
+    render();
+  }
+  hideOverlay();
+}
+
+// overlay: 全画面を覆う modal を作成/破棄する
+function showOverlay(cat) {
+  // prevent duplicate
+  if (document.getElementById('pomodoroOverlay')) return;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'pomodoroOverlay';
+  overlay.className = 'overlay';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.innerHTML = `
+    <div class="pomodoro-timer global">
+      <div class="pomodoro-clock" id="pomodoroClock">--:--</div>
+      <div class="pomodoro-controls">
+        <button id="pomodoroPause">一時停止</button>
+        <button id="pomodoroClose">中断</button>
+      </div>
+    </div>
+  `;
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  // focus trap & button handlers
+  const pauseBtn = document.getElementById('pomodoroPause');
+  const closeBtn2 = document.getElementById('pomodoroClose');
+  if (pauseBtn) {
+    pauseBtn.focus();
+    pauseBtn.onclick = () => {
+      if (!pomodoroTimer) {
+        // resume
+        pomodoroTimer = setInterval(() => tickGlobalTimer(), 1000);
+        // update label
+        pauseBtn.textContent = '一時停止';
+      } else {
+        // pause
+        clearInterval(pomodoroTimer);
+        pomodoroTimer = null;
+        pauseBtn.textContent = '再開';
+      }
+    };
+  }
+  if (closeBtn2) {
+    closeBtn2.onclick = () => {
+      const completedWork = pomodoroState && pomodoroState.phase === 'work' && pomodoroState.remaining <= 0;
+      clearInterval(pomodoroTimer);
+      pomodoroTimer = null;
+      hideOverlay();
+      closeGlobalTimerUI(completedWork);
+    };
+  }
+
+  // ブラウザの Esc で閉じさせない（無効化）
+  window.addEventListener('keydown', blockKeydown, true);
+}
+
+function hideOverlay() {
+  const overlay = document.getElementById('pomodoroOverlay');
+  if (overlay) overlay.remove();
+  window.removeEventListener('keydown', blockKeydown, true);
+}
+
+function blockKeydown(e) {
+  // Tab をループさせるなどの複雑な処理はここでは簡易的にブロック
+  // ただし Enter や Space はボタン操作で使いたいのでそれらは許可
+  if (e.key === 'Escape') {
+    e.stopImmediatePropagation();
+    e.preventDefault();
+    return false;
+  }
+  // タイマー以外のキーボード操作を禁止
+  if (e.target && !document.getElementById('pomodoroOverlay')) return;
+  // allow Enter/Space for buttons inside overlay
+  const allowed = ['Enter', ' ', 'Spacebar'];
+  if (allowed.includes(e.key)) return;
+  e.stopImmediatePropagation();
+  e.preventDefault();
+  return false;
+}
+
+// シンプルな beep を鳴らす（WebAudio API）
+function playBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'sine';
+    o.frequency.value = 880;
+    o.connect(g);
+    g.connect(ctx.destination);
+    g.gain.setValueAtTime(0.0001, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.01);
+    o.start();
+    setTimeout(() => {
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.2);
+      o.stop(ctx.currentTime + 0.25);
+      ctx.close();
+    }, 250);
+  } catch (e) {
+    console.warn('Audio not available', e);
+  }
+}
