@@ -253,7 +253,7 @@ function render() {
   const plus = document.createElement("button");
   plus.textContent = "＋";
   plus.className = "zoom-safe-button";
-  plus.onclick = () => startPomodoroForCategory(cat);
+  plus.onclick = () => showPomodoroChoice(cat);
 
     const buttonGroup = document.createElement("div");
     buttonGroup.className = "score-buttons";
@@ -1004,6 +1004,29 @@ document.addEventListener('DOMContentLoaded', () => {
     inpLong.value = pomodoro.long;
     alert('デフォルトにリセットしました');
   });
+  // restore active pomodoro if any
+  const saved = restoreActivePomodoroFromStorage();
+  if (saved) {
+    // rehydrate into pomodoroState and show UI
+    pomodoroState = saved;
+    // ensure numeric fields
+    pomodoroState.workSec = Number(pomodoroState.workSec || pomodoroState.workSec || 0);
+    pomodoroState.breakSec = Number(pomodoroState.breakSec || pomodoroState.breakSec || 0);
+    pomodoroState.pointsToGrant = Number(pomodoroState.pointsToGrant || 1);
+    // show overlay and resume ticking unless paused
+    showOverlay(pomodoroState.cat);
+    const topArea = document.querySelector('.top');
+    if (topArea) topArea.classList.add('dimmed');
+    if (!pomodoroState.paused) {
+      if (pomodoroTimer) clearInterval(pomodoroTimer);
+      pomodoroTimer = setInterval(() => tickGlobalTimer(), 1000);
+      tickGlobalTimer();
+    } else {
+      // show paused label
+      const pauseBtn = document.getElementById('pomodoroPause');
+      if (pauseBtn) pauseBtn.textContent = '再開';
+    }
+  }
 });
 
 // ----------------------
@@ -1012,14 +1035,104 @@ document.addEventListener('DOMContentLoaded', () => {
 let pomodoroTimer = null;
 let pomodoroState = null; // { cat, phase: 'work'|'break', remaining }
 
-function startPomodoroForCategory(cat) {
-  if (pomodoroTimer) return alert('既にタイマーが動作中です');
-  // 保存されている設定を読み込む
-  const p = JSON.parse(localStorage.getItem('pomodoro')) || pomodoro;
-  showGlobalTimerUI(cat, p);
+// 保存/復元用キー
+const ACTIVE_POMODORO_KEY = 'activePomodoro';
+
+function persistActivePomodoro() {
+  try {
+    if (!pomodoroState) {
+      localStorage.removeItem(ACTIVE_POMODORO_KEY);
+      return;
+    }
+    const copy = { ...pomodoroState };
+    // Date を number に
+    if (copy.startTS instanceof Date) copy.startTS = copy.startTS.valueOf();
+    if (copy.endTS instanceof Date) copy.endTS = copy.endTS.valueOf();
+    localStorage.setItem(ACTIVE_POMODORO_KEY, JSON.stringify(copy));
+  } catch (e) { console.warn('persistActivePomodoro failed', e); }
 }
 
-function showGlobalTimerUI(cat, p) {
+function clearActivePomodoroStorage() {
+  localStorage.removeItem(ACTIVE_POMODORO_KEY);
+}
+
+function restoreActivePomodoroFromStorage() {
+  try {
+    const raw = localStorage.getItem(ACTIVE_POMODORO_KEY);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    // ensure numeric fields
+    if (obj) {
+      if (obj.startTS) obj.startTS = Number(obj.startTS);
+      if (obj.endTS) obj.endTS = Number(obj.endTS);
+      return obj;
+    }
+  } catch (e) {
+    console.warn('restoreActivePomodoroFromStorage failed', e);
+  }
+  return null;
+}
+
+function startPomodoroForCategory(cat, pOption) {
+  if (pomodoroTimer) return alert('既にタイマーが動作中です');
+  // pOption 優先、未指定なら保存されている設定を読み込む
+  let p;
+  if (pOption && typeof pOption === 'object') {
+    p = {
+      work: Number(pOption.work) || (pomodoro.work || 25),
+      break: Number(pOption.break) || (pomodoro.break || 5),
+    };
+  } else {
+    p = JSON.parse(localStorage.getItem('pomodoro')) || pomodoro;
+  }
+  showGlobalTimerUI(cat, p, pOption && pOption.pointsToGrant ? pOption.pointsToGrant : 1);
+}
+
+// ＋ボタン押下時の選択ダイアログ（5分刻み: 5,10,15,20,25）
+function showPomodoroChoice(cat) {
+  if (document.getElementById('pomodoroChoiceOverlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'pomodoroChoiceOverlay';
+  overlay.className = 'overlay';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+
+  const options = [5,10,15,20,25];
+  let html = `<div style="display:flex;flex-direction:column;gap:10px;align-items:stretch;">`;
+  html += `<div style="font-weight:bold;margin-bottom:6px;text-align:center;">タイマーを選択してください</div>`;
+  for (let i=0;i<options.length;i++) {
+    const w = options[i];
+    const b = Math.max(1, Math.round(w/5));
+    const pts = i+1;
+    html += `<button class="zoom-safe-button" data-w="${w}" data-b="${b}" data-pts="${pts}" style="padding:10px;border-radius:6px;">${w}分（休憩 ${b}分・＋${pts}pt）</button>`;
+  }
+  html += `<button id="pomodoroChoiceCancel" style="margin-top:6px;padding:8px;border-radius:6px;">キャンセル</button>`;
+  html += `</div>`;
+
+  modal.innerHTML = html;
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  // ハンドラ
+  modal.querySelectorAll('button[data-w]').forEach(btn => {
+    btn.onclick = () => {
+      const w = Number(btn.dataset.w);
+      const b = Number(btn.dataset.b);
+      const pts = Number(btn.dataset.pts) || 1;
+      const pOption = { work: w, break: b, pointsToGrant: pts };
+      // remove choice overlay then start
+      const o = document.getElementById('pomodoroChoiceOverlay');
+      if (o) o.remove();
+      startPomodoroForCategory(cat, pOption);
+    };
+  });
+
+  const cancel = document.getElementById('pomodoroChoiceCancel');
+  if (cancel) cancel.onclick = () => { const o = document.getElementById('pomodoroChoiceOverlay'); if (o) o.remove(); };
+}
+
+function showGlobalTimerUI(cat, p, pointsToGrant = 1) {
   const list = document.getElementById('categoryList');
   if (!list) return alert('カテゴリ一覧が見つかりません');
 
@@ -1034,47 +1147,72 @@ function showGlobalTimerUI(cat, p) {
   if (topArea) topArea.classList.add('dimmed');
 
   // 初期状態
+  const workSec = (Number(p.work) || 25) * 60;
+  const breakSec = (Number(p.break) || 5) * 60;
+  const now = Date.now();
   pomodoroState = {
     cat,
     phase: 'work',
-    remaining: (Number(p.work) || 25) * 60,
-    workSec: (Number(p.work) || 25) * 60,
-    breakSec: (Number(p.break) || 5) * 60
+    remaining: workSec,
+    workSec: workSec,
+    breakSec: breakSec,
+    pointsToGrant: Number(pointsToGrant) || 1,
+    paused: false,
+    startTS: now,
+    endTS: now + workSec * 1000
   };
+  persistActivePomodoro();
 
+  // start ticking
+  if (pomodoroTimer) clearInterval(pomodoroTimer);
   pomodoroTimer = setInterval(() => tickGlobalTimer(), 1000);
   tickGlobalTimer();
 }
 
 function tickGlobalTimer() {
   if (!pomodoroState) return;
-  pomodoroState.remaining -= 1;
-  const min = Math.floor(pomodoroState.remaining / 60);
-  const sec = pomodoroState.remaining % 60;
+  if (pomodoroState.paused) return; // paused -> do nothing
+
+  const now = Date.now();
+  let remainingSec = Math.ceil((pomodoroState.endTS - now) / 1000);
+  // clamp
+  if (remainingSec < 0) remainingSec = 0;
+
+  const min = Math.floor(remainingSec / 60);
+  const sec = remainingSec % 60;
   const clock = document.getElementById('pomodoroClock');
   if (clock) clock.textContent = `${String(min).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
 
-  if (pomodoroState.remaining <= 0) {
+  // phase transition
+  if (remainingSec <= 0) {
     if (pomodoroState.phase === 'work') {
-      // work 終了 -> break に移行
       playBeep();
       pomodoroState.phase = 'break';
-      pomodoroState.remaining = pomodoroState.breakSec;
+      // set next endTS based on breakSec
+      pomodoroState.startTS = now;
+      pomodoroState.endTS = now + pomodoroState.breakSec * 1000;
       logBattle(`${pomodoroState.cat} の作業が終了しました。休憩に入ります。`);
+      // Notification
+      sendNotification('作業終了', `${pomodoroState.cat} の作業が終了しました。休憩に入ります。`);
+      persistActivePomodoro();
     } else {
-      // break 終了 -> セッション完了
+      // break finished
       playBeep();
+      // Notification
+      sendNotification('休憩終了', `${pomodoroState.cat} の休憩が終了しました。お疲れさま！`);
       clearInterval(pomodoroTimer);
       pomodoroTimer = null;
       logBattle(`${pomodoroState.cat} のポモドーロが完了しました！`);
       const completedCat = pomodoroState.cat;
+      const pts = pomodoroState.pointsToGrant || 1;
       pomodoroState = null;
-      closeGlobalTimerUI(true, completedCat);
+      clearActivePomodoroStorage();
+      closeGlobalTimerUI(true, completedCat, pts);
     }
   }
 }
 
-function closeGlobalTimerUI(grantPoint, completedCat) {
+function closeGlobalTimerUI(grantPoint, completedCat, points=1) {
   const list = document.getElementById('categoryList');
   if (!list) return;
   // チャートのダーク解除
@@ -1090,7 +1228,7 @@ function closeGlobalTimerUI(grantPoint, completedCat) {
 
   // ポイント付与
   if (grantPoint && completedCat) {
-    updateScore(completedCat, 1);
+    updateScore(completedCat, Number(points) || 1);
   } else {
     render();
   }
@@ -1127,24 +1265,38 @@ function showOverlay(cat) {
   if (pauseBtn) {
     pauseBtn.focus();
     pauseBtn.onclick = () => {
-      if (!pomodoroTimer) {
-        // resume
-        pomodoroTimer = setInterval(() => tickGlobalTimer(), 1000);
-        // update label
-        pauseBtn.textContent = '一時停止';
-      } else {
-        // pause
+      if (!pomodoroState) return;
+      if (!pomodoroState.paused) {
+        // pause: compute remaining and persist
+        const now = Date.now();
+        const remaining = Math.max(0, Math.ceil((pomodoroState.endTS - now) / 1000));
+        pomodoroState.paused = true;
+        pomodoroState.remainingSeconds = remaining;
         clearInterval(pomodoroTimer);
         pomodoroTimer = null;
         pauseBtn.textContent = '再開';
+        persistActivePomodoro();
+      } else {
+        // resume
+        pomodoroState.paused = false;
+        const rem = Number(pomodoroState.remainingSeconds || 0);
+        pomodoroState.startTS = Date.now();
+        pomodoroState.endTS = Date.now() + rem * 1000;
+        delete pomodoroState.remainingSeconds;
+        if (pomodoroTimer) clearInterval(pomodoroTimer);
+        pomodoroTimer = setInterval(() => tickGlobalTimer(), 1000);
+        pauseBtn.textContent = '一時停止';
+        persistActivePomodoro();
       }
     };
   }
   if (closeBtn2) {
     closeBtn2.onclick = () => {
-      const completedWork = pomodoroState && pomodoroState.phase === 'work' && pomodoroState.remaining <= 0;
+      const completedWork = pomodoroState && pomodoroState.phase === 'work' && (pomodoroState.remaining <= 0 || false);
       clearInterval(pomodoroTimer);
       pomodoroTimer = null;
+      // clear persisted state since user aborted
+      clearActivePomodoroStorage();
       hideOverlay();
       closeGlobalTimerUI(completedWork);
     };
@@ -1198,5 +1350,31 @@ function playBeep() {
     }, 250);
   } catch (e) {
     console.warn('Audio not available', e);
+  }
+}
+
+// Notification API helper
+function ensureNotificationPermission() {
+  try {
+    if (!('Notification' in window)) return Promise.resolve(false);
+    if (Notification.permission === 'granted') return Promise.resolve(true);
+    if (Notification.permission !== 'denied') {
+      return Notification.requestPermission().then(p => p === 'granted');
+    }
+    return Promise.resolve(false);
+  } catch (e) { return Promise.resolve(false); }
+}
+
+function sendNotification(title, body) {
+  try {
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'granted') {
+      new Notification(title, { body });
+    } else {
+      // try to request and then send
+      ensureNotificationPermission().then(ok => { if (ok) new Notification(title, { body }); });
+    }
+  } catch (e) {
+    console.warn('Notification failed', e);
   }
 }
