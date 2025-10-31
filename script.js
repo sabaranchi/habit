@@ -11,6 +11,9 @@ const statusNames = ["ATK", "DEF", "HP", "MP", "SPD"];
 // カテゴリとステータスを紐付け{カテゴリ名: ステータス名}
 let categoryToStatus = JSON.parse(localStorage.getItem("categoryToStatus")) || {};
 let categoryTargets = JSON.parse(localStorage.getItem("categoryTargets")) || {};
+// per-category quest and weekly-subquest storage
+let categoryQuests = JSON.parse(localStorage.getItem('categoryQuests')) || {};
+let categorySubquests = JSON.parse(localStorage.getItem('categorySubquests')) || {};
 // 例: { ATK: "体力", DEF: "防御力", HP: "体力", MP: "魔力", SPD: "敏捷" }
 let statMapping = JSON.parse(localStorage.getItem("statMapping")) || {}; 
 
@@ -60,6 +63,19 @@ function checkWeekRollover() {
     console.log("週が変わったので過去スコアを保存:", scores); // ← 追加
     pastScores = { ...scores };
     localStorage.setItem("pastScores", JSON.stringify(pastScores));
+    // reset weekly subquests at the start of a new week
+    try {
+      if (typeof categorySubquests === 'object' && categorySubquests !== null) {
+        for (const k of Object.keys(categorySubquests)) {
+          categorySubquests[k].text = '';
+          categorySubquests[k].enabled = false;
+        }
+        localStorage.setItem('categorySubquests', JSON.stringify(categorySubquests));
+        console.log('週替わりのサブクエストをリセットしました');
+      }
+    } catch (e) {
+      console.warn('サブクエストのリセットに失敗しました', e);
+    }
     alert("週が変わったので、過去スコアを更新しました！");
   }
   localStorage.setItem("lastUpdatedWeek", currentWeek.toString());
@@ -72,6 +88,9 @@ function save() {
   localStorage.setItem("categoryTargets", JSON.stringify(categoryTargets));
   localStorage.setItem("playerLevel", playerLevel);
   localStorage.setItem("categoryToStatus", JSON.stringify(categoryToStatus)); // ← 追加
+  // save new quest/subquest data
+  localStorage.setItem('categoryQuests', JSON.stringify(categoryQuests));
+  localStorage.setItem('categorySubquests', JSON.stringify(categorySubquests));
 }
 
 
@@ -84,6 +103,9 @@ function addCategory() {
   categories.push(name);
   scores[name] = 0;
   statusPoints[name] = 0; // ステータス初期化
+  // initialize quest/subquest for this category
+  categoryQuests[name] = { text: '', enabled: false };
+  categorySubquests[name] = { text: '', enabled: false };
   // ミッション機能を削除したため初期化処理は不要
 
   input.value = "";
@@ -99,6 +121,8 @@ function deleteCategories() {
   for (let t of targets) {
     delete scores[t];
     delete statusPoints[t];
+    delete categoryQuests[t];
+    delete categorySubquests[t];
   }
   save();
   render();
@@ -167,6 +191,15 @@ function enableEdit(labelElement, oldName) {
       statusPoints[newName] = statusPoints[oldName];
       delete statusPoints[oldName];
     }
+      // transfer quest/subquest data when renaming a category
+      if (categoryQuests && categoryQuests[oldName] !== undefined) {
+        categoryQuests[newName] = categoryQuests[oldName];
+        delete categoryQuests[oldName];
+      }
+      if (categorySubquests && categorySubquests[oldName] !== undefined) {
+        categorySubquests[newName] = categorySubquests[oldName];
+        delete categorySubquests[oldName];
+      }
 
 
     save();
@@ -253,7 +286,7 @@ function render() {
   const plus = document.createElement("button");
   plus.textContent = "＋";
   plus.className = "zoom-safe-button";
-  plus.onclick = () => showPomodoroChoice(cat);
+  plus.onclick = () => startFiveMinutePomodoro(cat);
 
     const buttonGroup = document.createElement("div");
     buttonGroup.className = "score-buttons";
@@ -262,6 +295,59 @@ function render() {
     // 要素追加（順番が重要）
     div.append(scoreLabel, targetDisplay, buttonGroup);
     list.appendChild(div);
+
+    // quest row (indented, under category)
+    const questDiv = document.createElement('div');
+    questDiv.className = 'quest-row';
+    const questInput = document.createElement('input');
+    questInput.type = 'text';
+    questInput.placeholder = '目標を入力';
+    questInput.value = (categoryQuests[cat] && categoryQuests[cat].text) || '';
+  const questToggleWrap = document.createElement('label');
+  questToggleWrap.className = 'quest-toggle';
+  const questToggle = document.createElement('input');
+  questToggle.type = 'checkbox';
+  questToggle.checked = !!(categoryQuests[cat] && categoryQuests[cat].enabled);
+  // accessibility label only; no visible text
+  questToggle.setAttribute('aria-label', '目標達成');
+  questToggleWrap.appendChild(questToggle);
+    questInput.addEventListener('change', () => {
+      categoryQuests[cat] = { text: questInput.value, enabled: !!questToggle.checked };
+      save();
+    });
+    questToggle.addEventListener('change', () => {
+      categoryQuests[cat] = { text: questInput.value, enabled: !!questToggle.checked };
+      save();
+    });
+    questDiv.appendChild(questInput);
+    questDiv.appendChild(questToggleWrap);
+    list.appendChild(questDiv);
+
+    // weekly subquest row (indented, under quest)
+    const subDiv = document.createElement('div');
+    subDiv.className = 'subquest-row';
+    const subInput = document.createElement('input');
+    subInput.type = 'text';
+    subInput.placeholder = '週替わりの小目標を入力';
+    subInput.value = (categorySubquests[cat] && categorySubquests[cat].text) || '';
+  const subToggleWrap = document.createElement('label');
+  subToggleWrap.className = 'subquest-toggle';
+  const subToggle = document.createElement('input');
+  subToggle.type = 'checkbox';
+  subToggle.checked = !!(categorySubquests[cat] && categorySubquests[cat].enabled);
+  subToggle.setAttribute('aria-label', '小目標達成');
+  subToggleWrap.appendChild(subToggle);
+    subInput.addEventListener('change', () => {
+      categorySubquests[cat] = { text: subInput.value, enabled: !!subToggle.checked };
+      save();
+    });
+    subToggle.addEventListener('change', () => {
+      categorySubquests[cat] = { text: subInput.value, enabled: !!subToggle.checked };
+      save();
+    });
+    subDiv.appendChild(subInput);
+    subDiv.appendChild(subToggleWrap);
+    list.appendChild(subDiv);
   }
 
   function renderCalendar() {
@@ -944,10 +1030,12 @@ document.addEventListener('DOMContentLoaded', () => {
   function openDrawer() {
     drawer.classList.add('open');
     drawer.setAttribute('aria-hidden', 'false');
-    // 現在値を反映
-    inpWork.value = pomodoro.work;
-    inpBreak.value = pomodoro.break;
-    inpLong.value = pomodoro.long;
+    // 現在値を反映（入力要素がある場合のみ）
+    try {
+      if (inpWork) inpWork.value = pomodoro.work;
+      if (inpBreak) inpBreak.value = pomodoro.break;
+      if (inpLong) inpLong.value = pomodoro.long;
+    } catch (e) { /* ignore */ }
   }
 
   function closeDrawer() {
@@ -973,7 +1061,7 @@ document.addEventListener('DOMContentLoaded', () => {
         drawerBtn.textContent = '✕';
         drawerBtn.setAttribute('aria-expanded', 'true');
       }
-      if (closeDrawerBtn) closeDrawerBtn.style.display = 'none';
+      if (closeDrawerBtn) closeDrawerBtn.style.display = '';
     }
   }
 
@@ -1004,29 +1092,52 @@ document.addEventListener('DOMContentLoaded', () => {
     inpLong.value = pomodoro.long;
     alert('デフォルトにリセットしました');
   });
-  // restore active pomodoro if any
-  const saved = restoreActivePomodoroFromStorage();
-  if (saved) {
-    // rehydrate into pomodoroState and show UI
-    pomodoroState = saved;
-    // ensure numeric fields
-    pomodoroState.workSec = Number(pomodoroState.workSec || pomodoroState.workSec || 0);
-    pomodoroState.breakSec = Number(pomodoroState.breakSec || pomodoroState.breakSec || 0);
-    pomodoroState.pointsToGrant = Number(pomodoroState.pointsToGrant || 1);
-    // show overlay and resume ticking unless paused
-    showOverlay(pomodoroState.cat);
-    const topArea = document.querySelector('.top');
-    if (topArea) topArea.classList.add('dimmed');
-    if (!pomodoroState.paused) {
+  // restore active pomodoro if any (persisted across page reloads)
+  try {
+    const saved = restoreActivePomodoroFromStorage();
+    if (saved) {
+      // rehydrate
+      pomodoroState = saved;
+      if (pomodoroState.endTS) pomodoroState.endTS = Number(pomodoroState.endTS);
+      if (pomodoroState.stopwatchStartTS) pomodoroState.stopwatchStartTS = Number(pomodoroState.stopwatchStartTS);
+
+      // show overlay and apply phase styling
+      showFixedPomodoroOverlay(pomodoroState.cat);
+      const modal = document.querySelector('#pomodoroOverlay .modal');
+      if (modal) {
+        modal.classList.remove('phase-five','phase-stopwatch','phase-break');
+        modal.classList.add('phase-' + (pomodoroState.phase || 'five'));
+      }
+
+      // adjust close button label/state
+      const closeBtn = document.getElementById('pomodoroClose');
+      if (pomodoroState.phase === 'stopwatch' && closeBtn) closeBtn.textContent = '終了';
+      if (pomodoroState.phase === 'break' && closeBtn) { closeBtn.textContent = '休憩中'; closeBtn.disabled = true; }
+
+      // start ticking unless paused
       if (pomodoroTimer) clearInterval(pomodoroTimer);
-      pomodoroTimer = setInterval(() => tickGlobalTimer(), 1000);
-      tickGlobalTimer();
-    } else {
-      // show paused label
-      const pauseBtn = document.getElementById('pomodoroPause');
-      if (pauseBtn) pauseBtn.textContent = '再開';
+      pomodoroTimer = setInterval(() => tickFixedPomodoro(), 1000);
+      tickFixedPomodoro();
     }
-  }
+  } catch (e) { console.warn('restore active pomodoro failed', e); }
+
+    // Birthday UI hookup (in drawer)
+    try {
+      const birthdayInp = document.getElementById('birthdayInput');
+      const saveBirthdayBtn = document.getElementById('saveBirthdayBtn');
+        const lifeExpectancyInp = document.getElementById('lifeExpectancyInput');
+      if (birthdayInp) {
+          birthdayInp.value = localStorage.getItem('birthday') || '';
+          birthdayInp.addEventListener('change', saveBirthdayFromInput);
+      }
+      if (saveBirthdayBtn) saveBirthdayBtn.addEventListener('click', saveBirthdayFromInput);
+        if (lifeExpectancyInp) {
+          lifeExpectancyInp.value = localStorage.getItem('lifeExpectancy') || '80';
+          lifeExpectancyInp.addEventListener('change', saveBirthdayFromInput);
+        }
+      // initial render
+      updateRemainingWeeks();
+    } catch (e) { /* ignore */ }
 });
 
 // ----------------------
@@ -1073,6 +1184,102 @@ function restoreActivePomodoroFromStorage() {
   return null;
 }
 
+// ----------------------
+// 誕生日 / 残り週間表示
+// ----------------------
+function updateRemainingWeeks() {
+  const dob = localStorage.getItem('birthday');
+  // If birthday not set, update top-area text if present and exit
+  if (!dob) {
+    const textEl = document.getElementById('remainingWeeksText');
+    if (textEl) textEl.textContent = '誕生日が未設定です';
+    const drawerDisplay = document.getElementById('remainingWeeksDisplay');
+    if (drawerDisplay) drawerDisplay.textContent = '誕生日が未設定です';
+    return;
+  }
+  const b = new Date(dob);
+  if (isNaN(b)) {
+    const textElErr = document.getElementById('remainingWeeksText');
+    if (textElErr) textElErr.textContent = '無効な日付です';
+    const drawerDisplayErr = document.getElementById('remainingWeeksDisplay');
+    if (drawerDisplayErr) drawerDisplayErr.textContent = '無効な日付です';
+    return;
+  }
+  // get target life expectancy from storage (default 80)
+  const storedLife = Number(localStorage.getItem('lifeExpectancy')) || 80;
+  const end = new Date(b);
+  end.setFullYear(end.getFullYear() + storedLife);
+  const now = new Date();
+  const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+  let weeksLeft = Math.floor((end - now) / msPerWeek);
+  if (weeksLeft < 0) weeksLeft = 0;
+  const totalWeeks = Math.max(1, Math.floor((end - b) / msPerWeek));
+  const weeksLived = Math.max(0, totalWeeks - weeksLeft);
+  const pct = Math.round((weeksLived / totalWeeks) * 100);
+  // update textual display (actual remaining) in top area and drawer (if present)
+  const textEl = document.getElementById('remainingWeeksText');
+  if (textEl) textEl.innerHTML = `残り週: <strong>${weeksLeft}</strong> 週 （経過 ${weeksLived}/${totalWeeks} 週・${pct}%）`;
+  const drawerDisplay = document.getElementById('remainingWeeksDisplay');
+  if (drawerDisplay) drawerDisplay.innerHTML = `残り週: <strong>${weeksLeft}</strong> 週 （経過 ${weeksLived}/${totalWeeks} 週・${pct}%）`;
+
+  // Janéの法則：時間の心理的長さは年齢の逆数に比例するとするモデル
+  // 連続近似を用い、体感残り週 = 52 * ln(endAge / currentAge)
+  const ageMs = now - b;
+  const msPerYear = 365.25 * 24 * 60 * 60 * 1000;
+  let currentAgeYears = ageMs / msPerYear;
+  // 下限を設けて極端な値を避ける
+  const referenceAge = 0.1; // 年（0.1年 ≒ 36.5日）を下限参照点とする
+  if (currentAgeYears < referenceAge) currentAgeYears = referenceAge;
+  const endAge = storedLife;
+
+  // 体感的な全体期間（出生時の参照Age -> 終了年齢）
+  const perceivedTotalWeeks = 52 * Math.log(Math.max(endAge / referenceAge, 1));
+  // 体感でこれまでに過ごした週数
+  const perceivedLivedWeeks = 52 * Math.log(Math.max(currentAgeYears / referenceAge, 1));
+  // 体感で残っている週数（数値的に安定化）
+  let perceivedRemainingWeeks = Math.max(0, Math.floor(perceivedTotalWeeks - perceivedLivedWeeks));
+
+  // percentPassed: 体感ベースでどれだけ過ぎたか（0-100）
+  let percentPassed = 0;
+  if (perceivedTotalWeeks <= 0) {
+    percentPassed = 100;
+  } else {
+    percentPassed = Math.round(Math.max(0, Math.min(100, (perceivedLivedWeeks / perceivedTotalWeeks) * 100)));
+  }
+
+  // update progress bar based on perceived progress (passed)
+  const fill = document.getElementById('remainingWeeksFill');
+  const text = document.getElementById('remainingWeeksText');
+  if (fill) {
+    fill.style.width = percentPassed + '%';
+  }
+  if (text) {
+    text.innerHTML = `残り週: <strong>${weeksLeft}</strong> 週 （経過 ${weeksLived}/${totalWeeks} 週）<br>体感残り週: <strong>${perceivedRemainingWeeks}</strong> 週・体感経過: <strong>${percentPassed}%</strong>`;
+  }
+}
+
+function saveBirthdayFromInput() {
+  const inp = document.getElementById('birthdayInput');
+  if (!inp) return;
+  const v = inp.value;
+  if (!v) {
+    localStorage.removeItem('birthday');
+  } else {
+    localStorage.setItem('birthday', v);
+  }
+  // also save life expectancy if provided
+  const lifeInp = document.getElementById('lifeExpectancyInput');
+  if (lifeInp) {
+    const lv = Number(lifeInp.value);
+    if (isFinite(lv) && lv > 0) {
+      localStorage.setItem('lifeExpectancy', String(Math.floor(lv)));
+    } else {
+      localStorage.removeItem('lifeExpectancy');
+    }
+  }
+  updateRemainingWeeks();
+}
+
 function startPomodoroForCategory(cat, pOption) {
   if (pomodoroTimer) return alert('既にタイマーが動作中です');
   // pOption 優先、未指定なら保存されている設定を読み込む
@@ -1089,47 +1296,170 @@ function startPomodoroForCategory(cat, pOption) {
 }
 
 // ＋ボタン押下時の選択ダイアログ（5分刻み: 5,10,15,20,25）
-function showPomodoroChoice(cat) {
-  if (document.getElementById('pomodoroChoiceOverlay')) return;
+// New fixed flow: 5-minute fixed timer -> stopwatch -> break (1/5 of stopwatch)
+function startFiveMinutePomodoro(cat) {
+  if (pomodoroTimer) return alert('既にタイマーが動作中です');
+
+  // setup state
+  const now = Date.now();
+  pomodoroState = {
+    cat,
+    phase: 'five', // 'five' | 'stopwatch' | 'break'
+    endTS: now + 5 * 60 * 1000,
+    stopwatchStartTS: null,
+  };
+
+  // persist immediately so reloads can restore
+  persistActivePomodoro();
+
+  // show overlay and start ticking
+  showFixedPomodoroOverlay(cat);
+  if (pomodoroTimer) clearInterval(pomodoroTimer);
+  pomodoroTimer = setInterval(() => tickFixedPomodoro(), 1000);
+  tickFixedPomodoro();
+}
+
+function tickFixedPomodoro() {
+  if (!pomodoroState) return;
+  const now = Date.now();
+  const clock = document.getElementById('pomodoroClock');
+  const closeBtn = document.getElementById('pomodoroClose');
+
+  if (pomodoroState.phase === 'five') {
+    let remaining = Math.ceil((pomodoroState.endTS - now) / 1000);
+    if (remaining < 0) remaining = 0;
+    const mm = Math.floor(remaining / 60);
+    const ss = remaining % 60;
+    if (clock) clock.textContent = `${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+
+    if (remaining <= 0) {
+      // transition to stopwatch that starts at 5:00
+      playBeep();
+      sendNotification('作業5分完了', `${pomodoroState.cat} の5分が経過しました。ストップウォッチを開始します。`);
+      pomodoroState.phase = 'stopwatch';
+      // set stopwatchStartTS so elapsed begins at 5 minutes (300s)
+      pomodoroState.stopwatchStartTS = Date.now() - 5 * 60 * 1000;
+      if (closeBtn) closeBtn.textContent = '終了';
+      // update overlay style to stopwatch phase
+      const modal = document.querySelector('#pomodoroOverlay .modal');
+      if (modal) {
+        modal.classList.remove('phase-five');
+        modal.classList.add('phase-stopwatch');
+      }
+      // show 05:00 immediately (tick will update next second)
+      if (clock) clock.textContent = '05:00';
+      // persist transition
+      persistActivePomodoro();
+    }
+    return;
+  }
+
+  if (pomodoroState.phase === 'stopwatch') {
+    const elapsed = Math.floor((now - (pomodoroState.stopwatchStartTS || now)) / 1000);
+    const mm = Math.floor(elapsed / 60);
+    const ss = elapsed % 60;
+    if (clock) clock.textContent = `${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+    return;
+  }
+
+  if (pomodoroState.phase === 'break') {
+    let remaining = Math.ceil((pomodoroState.endTS - now) / 1000);
+    if (remaining < 0) remaining = 0;
+    const mm = Math.floor(remaining / 60);
+    const ss = remaining % 60;
+    if (clock) clock.textContent = `${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+
+    if (remaining <= 0) {
+      playBeep();
+      sendNotification('休憩終了', `${pomodoroState.cat} の休憩が終了しました。`);
+      clearInterval(pomodoroTimer);
+      pomodoroTimer = null;
+      pomodoroState = null;
+      // ensure persisted state is cleared
+      clearActivePomodoroStorage();
+      // cleanup overlay and styles
+      const modal = document.querySelector('#pomodoroOverlay .modal');
+      if (modal) {
+        modal.classList.remove('phase-break');
+      }
+      hideOverlay();
+      render();
+    }
+    return;
+  }
+}
+
+function showFixedPomodoroOverlay(cat) {
+  // prevent duplicate
+  if (document.getElementById('pomodoroOverlay')) return;
+
   const overlay = document.createElement('div');
-  overlay.id = 'pomodoroChoiceOverlay';
+  overlay.id = 'pomodoroOverlay';
   overlay.className = 'overlay';
 
   const modal = document.createElement('div');
   modal.className = 'modal';
+  // initial phase class for coloring
+  modal.classList.add('phase-five');
+  modal.innerHTML = `
+    <div class="pomodoro-timer global">
+      <div class="pomodoro-clock" id="pomodoroClock">05:00</div>
+      <div class="pomodoro-controls">
+        <button id="pomodoroClose">中断</button>
+      </div>
+    </div>
+  `;
 
-  const options = [5,10,15,20,25];
-  let html = `<div style="display:flex;flex-direction:column;gap:10px;align-items:stretch;">`;
-  html += `<div style="font-weight:bold;margin-bottom:6px;text-align:center;">タイマーを選択してください</div>`;
-  for (let i=0;i<options.length;i++) {
-    const w = options[i];
-    const b = Math.max(1, Math.round(w/5));
-    const pts = i+1;
-    html += `<button class="zoom-safe-button" data-w="${w}" data-b="${b}" data-pts="${pts}" style="padding:10px;border-radius:6px;">${w}分（休憩 ${b}分・＋${pts}pt）</button>`;
-  }
-  html += `<button id="pomodoroChoiceCancel" style="margin-top:6px;padding:8px;border-radius:6px;">キャンセル</button>`;
-  html += `</div>`;
-
-  modal.innerHTML = html;
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
 
-  // ハンドラ
-  modal.querySelectorAll('button[data-w]').forEach(btn => {
-    btn.onclick = () => {
-      const w = Number(btn.dataset.w);
-      const b = Number(btn.dataset.b);
-      const pts = Number(btn.dataset.pts) || 1;
-      const pOption = { work: w, break: b, pointsToGrant: pts };
-      // remove choice overlay then start
-      const o = document.getElementById('pomodoroChoiceOverlay');
-      if (o) o.remove();
-      startPomodoroForCategory(cat, pOption);
-    };
-  });
+  const closeBtn = document.getElementById('pomodoroClose');
+  if (closeBtn) {
+    closeBtn.focus();
+    closeBtn.onclick = () => {
+      if (!pomodoroState) return hideOverlay();
+      // if still in initial 5-minute phase, treat as interrupt -> no points
+      if (pomodoroState.phase === 'five') {
+        clearInterval(pomodoroTimer);
+        pomodoroTimer = null;
+        pomodoroState = null;
+        clearActivePomodoroStorage();
+        hideOverlay();
+        render();
+        return;
+      }
 
-  const cancel = document.getElementById('pomodoroChoiceCancel');
-  if (cancel) cancel.onclick = () => { const o = document.getElementById('pomodoroChoiceOverlay'); if (o) o.remove(); };
+      // if in stopwatch phase, this button acts as "終了"
+      if (pomodoroState.phase === 'stopwatch') {
+        const now = Date.now();
+        const elapsed = Math.floor((now - (pomodoroState.stopwatchStartTS || now)) / 1000);
+        const minutes = Math.floor(elapsed / 60); // 切り捨てで1分につき1ポイント
+        if (minutes > 0) updateScore(pomodoroState.cat, minutes);
+
+        // start break: 1/5 of stopwatch time (seconds), minimum 60s
+        const breakSec = Math.max(60, Math.floor(elapsed / 5));
+        pomodoroState.phase = 'break';
+        pomodoroState.endTS = Date.now() + breakSec * 1000;
+        // change button to indicate休憩中 and disable; update modal style
+        closeBtn.textContent = '休憩中';
+        closeBtn.disabled = true;
+        const modal = document.querySelector('#pomodoroOverlay .modal');
+        if (modal) {
+          modal.classList.remove('phase-stopwatch');
+          modal.classList.add('phase-break');
+        }
+        // persist break state
+        persistActivePomodoro();
+        // ensure timer keeps ticking
+        return;
+      }
+
+      // if in break phase, ignore clicks (button should be disabled)
+    };
+  }
+
+  // block Esc and non-intended key actions while overlay present
+  window.addEventListener('keydown', blockKeydown, true);
 }
 
 function showGlobalTimerUI(cat, p, pointsToGrant = 1) {
@@ -1378,3 +1708,105 @@ function sendNotification(title, body) {
     console.warn('Notification failed', e);
   }
 }
+
+// Fallback global drawer open/close helpers in case DOM-scoped handlers fail
+function openDrawerGlobal() {
+  const drawer = document.getElementById('drawer');
+  const drawerBtn = document.getElementById('drawerBtn');
+  const closeDrawerBtn = document.getElementById('closeDrawerBtn');
+  if (!drawer) return;
+  // ensure no inline transform blocks the CSS rule
+  drawer.style.transform = '';
+  drawer.classList.add('open');
+  drawer.setAttribute('aria-hidden', 'false');
+  if (drawerBtn) {
+    drawerBtn.textContent = '✕';
+    drawerBtn.setAttribute('aria-expanded', 'true');
+  }
+  if (closeDrawerBtn) closeDrawerBtn.style.display = '';
+}
+
+function closeDrawerGlobal() {
+  const drawer = document.getElementById('drawer');
+  const drawerBtn = document.getElementById('drawerBtn');
+  const closeDrawerBtn = document.getElementById('closeDrawerBtn');
+  if (!drawer) return;
+  drawer.classList.remove('open');
+  drawer.setAttribute('aria-hidden', 'true');
+  // If any element inside the drawer still has focus, blur it to avoid
+  // aria-hidden on a focused element (accessibility issue).
+  try {
+    const active = document.activeElement;
+    if (active && drawer.contains(active)) {
+      // blur focused element inside drawer
+      if (typeof active.blur === 'function') active.blur();
+      // move focus to drawer button for accessibility
+      const db = document.getElementById('drawerBtn');
+      if (db) db.focus();
+    }
+  } catch (e) { /* ignore */ }
+  // remove any inline transform so CSS rules govern appearance
+  try { drawer.style.transform = ''; } catch (e) { /* ignore */ }
+  if (drawerBtn) {
+    drawerBtn.textContent = '☰';
+    drawerBtn.setAttribute('aria-expanded', 'false');
+  }
+  if (closeDrawerBtn) closeDrawerBtn.style.display = '';
+}
+
+// Document-level delegation to ensure clicks on either button always work
+document.addEventListener('click', (e) => {
+  const dBtn = e.target.closest && e.target.closest('#drawerBtn');
+  const cBtn = e.target.closest && e.target.closest('#closeDrawerBtn');
+  if (dBtn) {
+    const drawer = document.getElementById('drawer');
+    if (drawer && drawer.classList.contains('open')) {
+      closeDrawerGlobal();
+    } else {
+      openDrawerGlobal();
+    }
+    e.stopPropagation();
+    return;
+  }
+  if (cBtn) {
+    closeDrawerGlobal();
+    e.stopPropagation();
+    return;
+  }
+});
+
+// Ensure drawer is closed on load and attach direct handlers as a fallback
+function initDrawerControls() {
+  try {
+    const drawer = document.getElementById('drawer');
+    const drawerBtn = document.getElementById('drawerBtn');
+    const closeDrawerBtn = document.getElementById('closeDrawerBtn');
+    if (drawer) {
+      drawer.classList.remove('open');
+      drawer.setAttribute('aria-hidden', 'true');
+      // do NOT set inline transform here — let CSS handle the hidden state via class
+    }
+
+    if (drawerBtn) {
+      // remove existing handlers we may have added before to avoid duplication
+      drawerBtn.replaceWith(drawerBtn.cloneNode(true));
+      const newBtn = document.getElementById('drawerBtn') || document.querySelector('#drawerBtn');
+      if (newBtn) newBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const d = document.getElementById('drawer');
+        if (!d) return;
+        if (d.classList.contains('open')) closeDrawerGlobal(); else openDrawerGlobal();
+      });
+    }
+
+    if (closeDrawerBtn) {
+      closeDrawerBtn.replaceWith(closeDrawerBtn.cloneNode(true));
+      const newClose = document.getElementById('closeDrawerBtn') || document.querySelector('#closeDrawerBtn');
+      if (newClose) newClose.addEventListener('click', (ev) => { ev.stopPropagation(); closeDrawerGlobal(); });
+    }
+  } catch (e) { console.warn('drawer init failed', e); }
+}
+
+// call immediately and also on DOMContentLoaded as fallback
+initDrawerControls();
+document.addEventListener('DOMContentLoaded', initDrawerControls);

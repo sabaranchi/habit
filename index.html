@@ -15,11 +15,70 @@
       touch-action: manipulation;      /* ダブルタップズームやピンチズームを抑止 */
       -webkit-tap-highlight-color: transparent; /* タップ時のハイライトを消す（iOS用） */
     }
+    /* Pomodoro overlay phase colors */
+    .modal.phase-five {
+      background: linear-gradient(180deg, #fff7e6, #fff3cc);
+      border: 1px solid #ffd86b;
+    }
+    .modal.phase-stopwatch {
+      background: linear-gradient(180deg, #e8fff2, #d6ffe6);
+      border: 1px solid #6fe0a3;
+    }
+    .modal.phase-break {
+      background: linear-gradient(180deg, #e8f0ff, #d6e6ff);
+      border: 1px solid #7aa8ff;
+    }
+    /* Center modal contents a bit nicer */
+    .modal .pomodoro-timer { text-align: center; padding: 12px; }
+    /* Drawer positioning on right (hidden by default) */
+    .drawer {
+      position: fixed;
+      right: 0;
+      left: auto;
+      top: 0;
+      height: 100vh;
+      width: 300px;
+      max-width: 80vw;
+      z-index: 1200;
+      box-shadow: -2px 0 8px rgba(0,0,0,0.12);
+      background: white;
+      border-radius: 0 0 0 6px;
+      overflow: auto;
+      transform: translateX(110%); /* hidden to the right by default */
+      transition: transform 0.25s ease;
+    }
+    .drawer.open { transform: translateX(0%); }
+    /* Drawer button fixed at top-right */
+    #drawerBtn {
+      position: fixed;
+      right: 24px;
+      top: 18px;
+      z-index: 1300;
+      width: 44px;
+      height: 36px;
+      border-radius: 6px;
+      left: auto !important;
+    }
+    /* ensure .top stacks vertically so radar then progress then categories */
+    .top {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      align-items: center;
+      justify-content: flex-start;
+    }
+    /* Remaining weeks progress bar */
+    #remainingWeeksContainer { margin-top: 12px; width: 420px; max-width: 100%; }
+    #remainingWeeksTrack { background: #eee; height: 14px; border-radius: 8px; overflow: hidden; }
+    #remainingWeeksFill { height: 100%; width: 0%; background: linear-gradient(90deg,#6fe0a3,#6fb8ff); transition: width 0.4s ease; }
+    #remainingWeeksText { margin-top:6px; font-size:14px; color:#333; }
   </style>
   <link rel="manifest" href="manifest.json" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <link rel="apple-touch-icon" href="icon.png" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="icon" href="icon.svg" />
 </head>
 <body>
   <div id="recordArea" class="container">
@@ -27,6 +86,12 @@
       <canvas id="radarChart"></canvas>
       <!-- ドロワーメニューボタン -->
       <button id="drawerBtn" class="drawer-btn">☰</button>
+
+      <!-- Remaining weeks progress (80年想定) placed right below radar chart -->
+      <div id="remainingWeeksContainer">
+        <div id="remainingWeeksTrack"><div id="remainingWeeksFill"></div></div>
+        <div id="remainingWeeksText"></div>
+      </div>
     </div>
     
     <div class="bottom">
@@ -59,9 +124,6 @@
 
     <button id="menuBtn">メニュー</button>
 
-    <!-- ポモドーロ用ドロワー（左上） -->
-    <!-- NOTE: drawer をここから移動しました（親が display:none のとき開かないため） -->
-
     <div id="gameMenu" style="display:none; margin-top:20px; border:1px solid #ccc; padding:10px;">
       <button id="assignCategoryBtn">カテゴリ割り当て</button>
       <button id="resetProgressBtn">セーブデータ消去</button>
@@ -82,30 +144,24 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <!-- ポモドーロ用ドロワー（左上） - 常に DOM に置く -->
+
   <div id="drawer" class="drawer" aria-hidden="true">
     <div class="drawer-header">
-      <strong>タイマー設定</strong>
+      <strong></strong>
       <button id="closeDrawerBtn">✕</button>
     </div>
 
     <div class="drawer-body">
-      <label>作業時間 (分)
-        <input id="pomodoroWork" type="number" min="1" />
-      </label>
+      <label for="birthdayInput">誕生日</label>
+      <input id="birthdayInput" type="date" />
 
-      <label>休憩時間 (分)
-        <input id="pomodoroBreak" type="number" min="1" />
-      </label>
+      <label for="lifeExpectancyInput" style="display:block; margin-top:8px;">何歳まで生きるか</label>
+      <input id="lifeExpectancyInput" type="number" min="1" max="200" value="80" style="width:100px;" />
 
-      <label>長休憩 (分)
-        <input id="pomodoroLong" type="number" min="1" />
-      </label>
-
-      <div class="drawer-actions">
-        <button id="savePomodoroBtn">保存</button>
-        <button id="resetPomodoroBtn">デフォルト</button>
+      <div style="margin-top:8px;">
+        <button id="saveBirthdayBtn">保存</button>
       </div>
+
     </div>
   </div>
 
