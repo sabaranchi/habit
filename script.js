@@ -1121,20 +1121,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   } catch (e) { console.warn('restore active pomodoro failed', e); }
 
-    // Birthday UI hookup (in drawer)
+    // Birthday & Deadline UI hookup (in drawer)
     try {
       const birthdayInp = document.getElementById('birthdayInput');
       const saveBirthdayBtn = document.getElementById('saveBirthdayBtn');
-        const lifeExpectancyInp = document.getElementById('lifeExpectancyInput');
+      const deadlineInp = document.getElementById('deadlineInput');
       if (birthdayInp) {
-          birthdayInp.value = localStorage.getItem('birthday') || '';
-          birthdayInp.addEventListener('change', saveBirthdayFromInput);
+        birthdayInp.value = localStorage.getItem('birthday') || '';
+        birthdayInp.addEventListener('change', saveBirthdayFromInput);
+      }
+      if (deadlineInp) {
+        deadlineInp.value = localStorage.getItem('deadline') || '';
+        deadlineInp.addEventListener('change', saveBirthdayFromInput);
       }
       if (saveBirthdayBtn) saveBirthdayBtn.addEventListener('click', saveBirthdayFromInput);
-        if (lifeExpectancyInp) {
-          lifeExpectancyInp.value = localStorage.getItem('lifeExpectancy') || '80';
-          lifeExpectancyInp.addEventListener('change', saveBirthdayFromInput);
-        }
       // initial render
       updateRemainingWeeks();
     } catch (e) { /* ignore */ }
@@ -1205,10 +1205,18 @@ function updateRemainingWeeks() {
     if (drawerDisplayErr) drawerDisplayErr.textContent = '無効な日付です';
     return;
   }
-  // get target life expectancy from storage (default 80)
+  // Determine end date: prefer explicit deadline (date), otherwise fall back to stored life-expectancy years
+  const deadlineStr = localStorage.getItem('deadline');
+  let end = null;
+  if (deadlineStr) {
+    const d = new Date(deadlineStr);
+    if (!isNaN(d)) end = d;
+  }
   const storedLife = Number(localStorage.getItem('lifeExpectancy')) || 80;
-  const end = new Date(b);
-  end.setFullYear(end.getFullYear() + storedLife);
+  if (!end) {
+    end = new Date(b);
+    end.setFullYear(end.getFullYear() + storedLife);
+  }
   const now = new Date();
   const msPerWeek = 7 * 24 * 60 * 60 * 1000;
   let weeksLeft = Math.floor((end - now) / msPerWeek);
@@ -1230,10 +1238,11 @@ function updateRemainingWeeks() {
   // 下限を設けて極端な値を避ける
   const referenceAge = 0.1; // 年（0.1年 ≒ 36.5日）を下限参照点とする
   if (currentAgeYears < referenceAge) currentAgeYears = referenceAge;
-  const endAge = storedLife;
+  // compute end age in years (birth -> end)
+  const endAgeYears = Math.max(0.001, (end - b) / msPerYear);
 
   // 体感的な全体期間（出生時の参照Age -> 終了年齢）
-  const perceivedTotalWeeks = 52 * Math.log(Math.max(endAge / referenceAge, 1));
+  const perceivedTotalWeeks = 52 * Math.log(Math.max(endAgeYears / referenceAge, 1));
   // 体感でこれまでに過ごした週数
   const perceivedLivedWeeks = 52 * Math.log(Math.max(currentAgeYears / referenceAge, 1));
   // 体感で残っている週数（数値的に安定化）
@@ -1275,6 +1284,17 @@ function saveBirthdayFromInput() {
       localStorage.setItem('lifeExpectancy', String(Math.floor(lv)));
     } else {
       localStorage.removeItem('lifeExpectancy');
+    }
+  }
+  // save deadline date input if present (new: デッドライン)
+  const deadlineInp = document.getElementById('deadlineInput');
+  if (deadlineInp) {
+    const dv = deadlineInp.value;
+    if (!dv) {
+      localStorage.removeItem('deadline');
+    } else {
+      // store as ISO date string
+      localStorage.setItem('deadline', dv);
     }
   }
   updateRemainingWeeks();
