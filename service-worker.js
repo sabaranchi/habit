@@ -51,3 +51,23 @@ self.addEventListener('activate', (event) => {
     )
   );
 });
+
+// Notification click: focus an existing client or open a new window
+self.addEventListener('notificationclick', function(event) {
+  event.notification.close();
+  const urlToOpen = new URL('/', self.location.origin).href;
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windowClients => {
+      for (const client of windowClients) {
+        // If the page is already open, focus it
+        if (client.url === urlToOpen || client.url === self.location.origin + '/' ) {
+          return client.focus();
+        }
+      }
+      // otherwise open a new window
+      if (clients.openWindow) {
+        return clients.openWindow(urlToOpen);
+      }
+    })
+  );
+});

@@ -1118,6 +1118,8 @@ document.addEventListener('DOMContentLoaded', () => {
       if (pomodoroTimer) clearInterval(pomodoroTimer);
       pomodoroTimer = setInterval(() => tickFixedPomodoro(), 1000);
       tickFixedPomodoro();
+      // re-schedule notifications for this state (best-effort)
+      try { schedulePomodoroNotifications(pomodoroState); } catch (e) { /* ignore */ }
     }
   } catch (e) { console.warn('restore active pomodoro failed', e); }
 
@@ -1160,6 +1162,10 @@ function persistActivePomodoro() {
     if (copy.startTS instanceof Date) copy.startTS = copy.startTS.valueOf();
     if (copy.endTS instanceof Date) copy.endTS = copy.endTS.valueOf();
     localStorage.setItem(ACTIVE_POMODORO_KEY, JSON.stringify(copy));
+    // Try to schedule notifications for important transitions (best-effort)
+    try {
+      schedulePomodoroNotifications(copy);
+    } catch (e) { /* ignore scheduling errors */ }
   } catch (e) { console.warn('persistActivePomodoro failed', e); }
 }
 
@@ -1182,6 +1188,76 @@ function restoreActivePomodoroFromStorage() {
     console.warn('restoreActivePomodoroFromStorage failed', e);
   }
   return null;
+}
+
+// Attempt to schedule notifications for pomodoro events (best-effort).
+// Uses Service Worker Notification Triggers API if available. Falls back to requesting
+// permission and doing nothing if scheduling isn't supported.
+function schedulePomodoroNotifications(state) {
+  if (!state) return;
+  // Only schedule notifications for future events we care about:
+  // - end of the initial 5-minute phase (transition to stopwatch)
+  // - end of a break (notify user break finished)
+  try {
+    ensureNotificationPermission().then((granted) => {
+      if (!granted) return;
+      // get service worker registration if available
+      if (!('serviceWorker' in navigator)) return;
+      navigator.serviceWorker.getRegistration().then((reg) => {
+        if (!reg) return;
+        // helper to attempt schedule via showNotification + TimestampTrigger
+        const trySchedule = (ts, title, body, tag) => {
+          if (!ts || ts <= Date.now()) return;
+          try {
+            // Feature detect: TimestampTrigger (Notification Triggers API)
+            if (typeof TimestampTrigger !== 'undefined') {
+              reg.showNotification(title, {
+                body: body,
+                tag: tag,
+                renotify: true,
+                showTrigger: new TimestampTrigger(ts)
+              }).catch((e) => {
+                // quietly ignore if not supported in this browser build
+                console.warn('showNotification with showTrigger failed', e);
+              });
+              return;
+            }
+          } catch (e) {
+            // ignore
+          }
+
+          // If TimestampTrigger not available, we cannot reliably schedule when the
+          // page is closed. As a fallback, if page is still open we can set a timeout
+          // (this helps only when app in background but not closed). Also, if the
+          // time until the event is short, we attempt setTimeout as a best-effort.
+          const delta = ts - Date.now();
+          if (delta > 0 && delta <= 24 * 3600 * 1000) { // only schedule short timeouts (<=24h)
+            setTimeout(() => {
+              reg.showNotification(title, { body: body, tag: tag, renotify: true });
+            }, delta);
+          }
+        };
+
+        // schedule based on state phase
+        if (state.phase === 'five' && state.endTS) {
+          trySchedule(Number(state.endTS), '作業5分完了', `${state.cat} の5分が経過しました。ストップウォッチへ移行します。`, 'pomodoro-five-' + (state.cat || ''));
+        }
+        if (state.phase === 'break' && state.endTS) {
+          trySchedule(Number(state.endTS), '休憩終了', `${state.cat} の休憩が終了しました。`, 'pomodoro-break-' + (state.cat || ''));
+        }
+        // For stopwatch phase there is no deterministic end until user stops; nothing to schedule.
+      }).catch((e) => { console.warn('getRegistration failed', e); });
+    });
+  } catch (e) {
+    console.warn('schedulePomodoroNotifications error', e);
+  }
+}
+
+// Convenience helper to schedule break-end notification when transitioning to break
+function scheduleBreakEndNotification(endTS, cat) {
+  try {
+    schedulePomodoroNotifications({ phase: 'break', endTS: endTS, cat: cat });
+  } catch (e) { /* ignore */ }
 }
 
 // ----------------------
@@ -1353,12 +1429,17 @@ function tickFixedPomodoro() {
     if (clock) clock.textContent = `${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
 
     if (remaining <= 0) {
-      // transition to stopwatch that starts at 5:00
-      playBeep();
-      sendNotification('作業5分完了', `${pomodoroState.cat} の5分が経過しました。ストップウォッチを開始します。`);
-      pomodoroState.phase = 'stopwatch';
-      // set stopwatchStartTS so elapsed begins at 5 minutes (300s)
-      pomodoroState.stopwatchStartTS = Date.now() - 5 * 60 * 1000;
+  // transition to stopwatch that starts at 5:00 (and continues counting even if the
+  // transition happened while the app was closed). Use the stored endTS if
+  // available so elapsed includes time passed since end.
+  playBeep();
+  sendNotification('作業5分完了', `${pomodoroState.cat} の5分が経過しました。ストップウォッチを開始します。`);
+  pomodoroState.phase = 'stopwatch';
+  // If endTS is in the past (e.g. app was closed and reopened), use that
+  // timestamp so the stopwatch reflects time passed since the 5-minute mark.
+  const transitionTime = (pomodoroState.endTS && Number(pomodoroState.endTS)) || Date.now();
+  // stopwatchStartTS is set so that elapsed = now - stopwatchStartTS = 300 + (now - transitionTime)
+  pomodoroState.stopwatchStartTS = Number(transitionTime) - 5 * 60 * 1000;
       if (closeBtn) closeBtn.textContent = '終了';
       // update overlay style to stopwatch phase
       const modal = document.querySelector('#pomodoroOverlay .modal');
@@ -1460,6 +1541,8 @@ function showFixedPomodoroOverlay(cat) {
         const breakSec = Math.max(60, Math.floor(elapsed / 5));
         pomodoroState.phase = 'break';
         pomodoroState.endTS = Date.now() + breakSec * 1000;
+        // attempt to schedule a notification for break end
+        try { scheduleBreakEndNotification(pomodoroState.endTS, pomodoroState.cat); } catch(e) { /* ignore */ }
         // change button to indicate休憩中 and disable; update modal style
         closeBtn.textContent = '休憩中';
         closeBtn.disabled = true;
@@ -1541,6 +1624,8 @@ function tickGlobalTimer() {
       // set next endTS based on breakSec
       pomodoroState.startTS = now;
       pomodoroState.endTS = now + pomodoroState.breakSec * 1000;
+        // schedule a notification for break end (best-effort)
+        try { scheduleBreakEndNotification(pomodoroState.endTS, pomodoroState.cat); } catch (e) { /* ignore */ }
       logBattle(`${pomodoroState.cat} の作業が終了しました。休憩に入ります。`);
       // Notification
       sendNotification('作業終了', `${pomodoroState.cat} の作業が終了しました。休憩に入ります。`);
