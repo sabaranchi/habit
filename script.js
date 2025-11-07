@@ -47,6 +47,31 @@ function getCurrentWeek() {
   return weekNumber;
 }
 
+// Reset only the subquest "enabled" toggles when the date changes (daily reset).
+function checkSubquestDateRollover() {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const last = localStorage.getItem('lastSubquestDate');
+    if (!last) {
+      localStorage.setItem('lastSubquestDate', today);
+      return;
+    }
+    if (last !== today) {
+      // clear only the enabled/completed flags, preserve the text
+      if (typeof categorySubquests === 'object' && categorySubquests !== null) {
+        for (const k of Object.keys(categorySubquests)) {
+          if (categorySubquests[k]) categorySubquests[k].enabled = false;
+        }
+        localStorage.setItem('categorySubquests', JSON.stringify(categorySubquests));
+      }
+      localStorage.setItem('lastSubquestDate', today);
+      console.log('日付が変わったためサブクエストの完了トグルをリセットしました');
+    }
+  } catch (e) {
+    console.warn('checkSubquestDateRollover failed', e);
+  }
+}
+
 // 指定日付の週番号を算出（getCurrentWeek と同じロジックを任意日付で使う）
 function getWeekNumberForDate(dateObj) {
   const target = new Date(dateObj.valueOf());
@@ -63,19 +88,7 @@ function checkWeekRollover() {
     console.log("週が変わったので過去スコアを保存:", scores); // ← 追加
     pastScores = { ...scores };
     localStorage.setItem("pastScores", JSON.stringify(pastScores));
-    // reset weekly subquests at the start of a new week
-    try {
-      if (typeof categorySubquests === 'object' && categorySubquests !== null) {
-        for (const k of Object.keys(categorySubquests)) {
-          categorySubquests[k].text = '';
-          categorySubquests[k].enabled = false;
-        }
-        localStorage.setItem('categorySubquests', JSON.stringify(categorySubquests));
-        console.log('週替わりのサブクエストをリセットしました');
-      }
-    } catch (e) {
-      console.warn('サブクエストのリセットに失敗しました', e);
-    }
+    // NOTE: weekly automatic reset of subquests was removed. Subquest texts are preserved.
     alert("週が変わったので、過去スコアを更新しました！");
   }
   localStorage.setItem("lastUpdatedWeek", currentWeek.toString());
@@ -326,9 +339,9 @@ function render() {
     // weekly subquest row (indented, under quest)
     const subDiv = document.createElement('div');
     subDiv.className = 'subquest-row';
-    const subInput = document.createElement('input');
-    subInput.type = 'text';
-    subInput.placeholder = '週替わりの小目標を入力';
+  const subInput = document.createElement('input');
+  subInput.type = 'text';
+  subInput.placeholder = '毎日やることを入力';
     subInput.value = (categorySubquests[cat] && categorySubquests[cat].text) || '';
   const subToggleWrap = document.createElement('label');
   subToggleWrap.className = 'subquest-toggle';
@@ -1139,6 +1152,9 @@ document.addEventListener('DOMContentLoaded', () => {
       if (saveBirthdayBtn) saveBirthdayBtn.addEventListener('click', saveBirthdayFromInput);
       // initial render
       updateRemainingWeeks();
+      // daily subquest toggle rollover check: run once on load and then periodically
+      try { checkSubquestDateRollover(); } catch (e) { /* ignore */ }
+      setInterval(() => { try { checkSubquestDateRollover(); } catch (e) { /* ignore */ } }, 60 * 1000);
     } catch (e) { /* ignore */ }
 });
 

@@ -407,4 +407,11 @@ button {
     justify-self: start;
     align-self: center;
   }
+
+  /* Make quest/subquest checkboxes slightly larger on mobile for easier tapping */
+  .quest-toggle input[type="checkbox"], .subquest-toggle input[type="checkbox"] {
+    width: 26px;
+    height: 26px;
+    transform: none; /* avoid scaling artifacts */
+  }
 }
