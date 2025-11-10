@@ -50,7 +50,10 @@ function getCurrentWeek() {
 // Reset only the subquest "enabled" toggles when the date changes (daily reset).
 function checkSubquestDateRollover() {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    // Use local date (YYYY-MM-DD) to avoid UTC offset issues around midnight
+    const dnow = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const today = `${dnow.getFullYear()}-${pad(dnow.getMonth()+1)}-${pad(dnow.getDate())}`;
     const last = localStorage.getItem('lastSubquestDate');
     if (!last) {
       localStorage.setItem('lastSubquestDate', today);
@@ -58,14 +61,22 @@ function checkSubquestDateRollover() {
     }
     if (last !== today) {
       // clear only the enabled/completed flags, preserve the text
+      let changed = false;
       if (typeof categorySubquests === 'object' && categorySubquests !== null) {
         for (const k of Object.keys(categorySubquests)) {
-          if (categorySubquests[k]) categorySubquests[k].enabled = false;
+          if (categorySubquests[k] && categorySubquests[k].enabled) {
+            categorySubquests[k].enabled = false;
+            changed = true;
+          }
         }
-        localStorage.setItem('categorySubquests', JSON.stringify(categorySubquests));
+        if (changed) {
+          localStorage.setItem('categorySubquests', JSON.stringify(categorySubquests));
+        }
       }
       localStorage.setItem('lastSubquestDate', today);
       console.log('日付が変わったためサブクエストの完了トグルをリセットしました');
+      // update UI if needed
+      try { if (changed) render(); } catch (e) { /* ignore */ }
     }
   } catch (e) {
     console.warn('checkSubquestDateRollover failed', e);
@@ -979,26 +990,37 @@ function updateChart() {
     pastValues = labels.map((l) => oneWeekAgo[l]);
   }
 
+  // diagnostic logging to help debug pastValues / pastScores
+  try {
+    console.debug('updateChart: labels=', labels);
+    console.debug('updateChart: values=', values);
+    console.debug('updateChart: pastScores (raw)=', pastScores);
+    console.debug('updateChart: pastValues=', pastValues);
+  } catch (e) { /* ignore logging errors */ }
+
   if (chart) chart.destroy();
 
+  // Draw previous-week dataset first (underneath) so current-week stands out.
   chart = new Chart(ctx, {
-    type: "radar",
+    type: 'radar',
     data: {
       labels: labels,
       datasets: [
         {
-          label: "今週",
-          data: values,
-          backgroundColor: "rgba(0, 128, 255, 0.2)",
-          borderColor: "blue",
+          label: '先週',
+          data: pastValues,
+          backgroundColor: 'rgba(128,128,128,0.25)',
+          borderColor: '#666',
+          pointBackgroundColor: '#666'
         },
         {
-          label: "先週",
-          data: pastValues,
-          backgroundColor: "rgba(128, 128, 128, 0.1)",
-          borderColor: "gray",
-        },
-      ],
+          label: '今週',
+          data: values,
+          backgroundColor: 'rgba(0,128,255,0.28)',
+          borderColor: 'blue',
+          pointBackgroundColor: 'blue'
+        }
+      ]
     },
     options: {
       responsive: false,
@@ -1006,11 +1028,17 @@ function updateChart() {
       scales: {
         r: {
           beginAtZero: true,
-          suggestedMax: 10,
-        },
-      },
-    },
+          suggestedMax: 10
+        }
+      }
+    }
   });
+
+  // If pastValues are all zero, warn in console to help debugging
+  try {
+    const allZero = pastValues.every(v => Number(v) === 0);
+    if (allZero) console.info('updateChart: pastValues appear to be all zero — check pastScores/localStorage/dailyLog');
+  } catch (e) { /* ignore */ }
 }
 
 checkWeekRollover();
