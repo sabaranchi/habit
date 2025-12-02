@@ -59,19 +59,59 @@
       border-radius: 6px;
       left: auto !important;
     }
-    /* ensure .top stacks vertically so radar then progress then categories */
+    /* top area: make a positioned container so we can overlay the small remaining box */
     .top {
+      position: relative;
       display: flex;
-      flex-direction: column;
-      gap: 12px;
       align-items: center;
-      justify-content: flex-start;
+      justify-content: center;
+      width: 100%;
+      padding: 12px 8px;
+      box-sizing: border-box;
+      gap: 12px;
     }
-    /* Remaining weeks progress bar */
-    #remainingWeeksContainer { margin-top: 12px; width: 420px; max-width: 100%; }
-    #remainingWeeksTrack { background: #eee; height: 14px; border-radius: 8px; overflow: hidden; }
-    #remainingWeeksFill { height: 100%; width: 0%; background: linear-gradient(90deg,#6fe0a3,#6fb8ff); transition: width 0.4s ease; }
-    #remainingWeeksText { margin-top:6px; font-size:14px; color:#333; }
+
+    /* Radar chart should occupy most of the top area and remain square */
+    #radarChart {
+      width: 400%;
+      aspect-ratio: 1 / 1; /* keep canvas square */
+      height: 400%; /* let aspect-ratio control height */
+      display: block;
+    }
+
+    /* Small remaining box positioned at the bottom-right of .top
+       Make the container itself fully transparent so it doesn't cover the chart;
+       keep small per-line backgrounds to keep text readable over the chart. */
+    #remainingContainer {
+      position: absolute;
+      right: 12px;
+      bottom: 12px;
+      width: 160px;
+      background: transparent; /* container transparent so chart shows through */
+      border: none;
+      padding: 4px 6px; /* small padding retained for hit area */
+      border-radius: 8px;
+      box-shadow: none;
+      box-sizing: border-box;
+      z-index: 800;
+      text-align: right;
+      pointer-events: auto;
+    }
+
+    /* Each line inside the container gets a small pill background so only text areas obscure chart */
+    #remainingContainer > div {
+      display: inline-block;
+      background: rgba(255,255,255,0.85);
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-bottom: 6px;
+      color: #111;
+      font-weight: 600;
+      line-height: 1;
+    }
+
+    /* Smaller subtext (achievement fraction) */
+    #remainingContainer > div + div { font-size: 13px; font-weight: 500; color: #444; background: rgba(255,255,255,0.9); padding: 2px 6px; }
   </style>
   <link rel="manifest" href="manifest.json" />
   <meta name="mobile-web-app-capable" content="yes" />
@@ -88,10 +128,7 @@
       <button id="drawerBtn" class="drawer-btn">☰</button>
 
       <!-- Remaining weeks progress (80年想定) placed right below radar chart -->
-      <div id="remainingWeeksContainer">
-        <div id="remainingWeeksTrack"><div id="remainingWeeksFill"></div></div>
-        <div id="remainingWeeksText"></div>
-      </div>
+      <div id="remainingContainer"></div>
     </div>
     
     <div class="bottom">

@@ -1225,7 +1225,8 @@ function restoreActivePomodoroFromStorage() {
     // ensure numeric fields
     if (obj) {
       if (obj.startTS) obj.startTS = Number(obj.startTS);
-      if (obj.endTS) obj.endTS = Number(obj.endTS);
+      if (obj.endTS) obj.endTS = Numb
+      er(obj.endTS);
       return obj;
     }
   } catch (e) {
@@ -1309,18 +1310,14 @@ function scheduleBreakEndNotification(endTS, cat) {
 // ----------------------
 function updateRemainingWeeks() {
   const dob = localStorage.getItem('birthday');
-  // If birthday not set, update top-area text if present and exit
+  // If birthday not set, update drawer display if present and exit
   if (!dob) {
-    const textEl = document.getElementById('remainingWeeksText');
-    if (textEl) textEl.textContent = '誕生日が未設定です';
     const drawerDisplay = document.getElementById('remainingWeeksDisplay');
     if (drawerDisplay) drawerDisplay.textContent = '誕生日が未設定です';
     return;
   }
   const b = new Date(dob);
   if (isNaN(b)) {
-    const textElErr = document.getElementById('remainingWeeksText');
-    if (textElErr) textElErr.textContent = '無効な日付です';
     const drawerDisplayErr = document.getElementById('remainingWeeksDisplay');
     if (drawerDisplayErr) drawerDisplayErr.textContent = '無効な日付です';
     return;
@@ -1344,47 +1341,109 @@ function updateRemainingWeeks() {
   const totalWeeks = Math.max(1, Math.floor((end - b) / msPerWeek));
   const weeksLived = Math.max(0, totalWeeks - weeksLeft);
   const pct = Math.round((weeksLived / totalWeeks) * 100);
-  // update textual display (actual remaining) in top area and drawer (if present)
-  const textEl = document.getElementById('remainingWeeksText');
-  if (textEl) textEl.innerHTML = `残り週: <strong>${weeksLeft}</strong> 週 （経過 ${weeksLived}/${totalWeeks} 週・${pct}%）`;
+  // update drawer textual display (actual remaining) if present
   const drawerDisplay = document.getElementById('remainingWeeksDisplay');
   if (drawerDisplay) drawerDisplay.innerHTML = `残り週: <strong>${weeksLeft}</strong> 週 （経過 ${weeksLived}/${totalWeeks} 週・${pct}%）`;
 
-  // Janéの法則：時間の心理的長さは年齢の逆数に比例するとするモデル
-  // 連続近似を用い、体感残り週 = 52 * ln(endAge / currentAge)
-  const ageMs = now - b;
-  const msPerYear = 365.25 * 24 * 60 * 60 * 1000;
-  let currentAgeYears = ageMs / msPerYear;
-  // 下限を設けて極端な値を避ける
-  const referenceAge = 0.1; // 年（0.1年 ≒ 36.5日）を下限参照点とする
-  if (currentAgeYears < referenceAge) currentAgeYears = referenceAge;
-  // compute end age in years (birth -> end)
-  const endAgeYears = Math.max(0.001, (end - b) / msPerYear);
+   // Update the new top-area remainingContainer with weeks/days/hours and subquest fraction
+  try { renderRemainingContainer(end); } catch (e) { /* ignore */ }
+}
 
-  // 体感的な全体期間（出生時の参照Age -> 終了年齢）
-  const perceivedTotalWeeks = 52 * Math.log(Math.max(endAgeYears / referenceAge, 1));
-  // 体感でこれまでに過ごした週数
-  const perceivedLivedWeeks = 52 * Math.log(Math.max(currentAgeYears / referenceAge, 1));
-  // 体感で残っている週数（数値的に安定化）
-  let perceivedRemainingWeeks = Math.max(0, Math.floor(perceivedTotalWeeks - perceivedLivedWeeks));
+// Render remainingContainer: remaining weeks, days, hours to 'end' date (or show unset)
+// Interval id to update the remaining container every second
+let __remainingContainerIntervalId = null;
 
-  // percentPassed: 体感ベースでどれだけ過ぎたか（0-100）
-  let percentPassed = 0;
-  if (perceivedTotalWeeks <= 0) {
-    percentPassed = 100;
-  } else {
-    percentPassed = Math.round(Math.max(0, Math.min(100, (perceivedLivedWeeks / perceivedTotalWeeks) * 100)));
+function renderRemainingContainer(endDate) {
+  const container = document.getElementById('remainingContainer');
+  if (!container) return;
+
+  // resolve end date (deadline preferred, then birthday+lifeExpectancy)
+  function resolveEnd(dArg) {
+    try {
+      if (dArg instanceof Date && !isNaN(dArg)) return dArg;
+      if (typeof dArg === 'number') return new Date(dArg);
+    } catch (e) {}
+    const deadlineStr = localStorage.getItem('deadline');
+    if (deadlineStr) {
+      const d = new Date(deadlineStr);
+      if (!isNaN(d)) return d;
+    }
+    const dob = localStorage.getItem('birthday');
+    if (dob) {
+      const b = new Date(dob);
+      if (!isNaN(b)) {
+        const storedLife = Number(localStorage.getItem('lifeExpectancy')) || 80;
+        const e = new Date(b);
+        e.setFullYear(e.getFullYear() + storedLife);
+        return e;
+      }
+    }
+    return null;
   }
 
-  // update progress bar based on perceived progress (passed)
-  const fill = document.getElementById('remainingWeeksFill');
-  const text = document.getElementById('remainingWeeksText');
-  if (fill) {
-    fill.style.width = percentPassed + '%';
+  const end = resolveEnd(endDate);
+
+  // internal update function (called every second)
+  function doUpdate() {
+    if (!container) return;
+    let html = '';
+    if (!end) {
+      html = '<div style="font-size:14px;color:#555">デッドライン未設定</div>';
+      container.innerHTML = html;
+      return;
+    }
+
+    const now = new Date();
+    let deltaMs = end - now;
+    if (deltaMs < 0) deltaMs = 0;
+
+    const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+    const msPerDay = 24 * 60 * 60 * 1000;
+
+    // Remaining full weeks
+    const weeks = Math.floor(deltaMs / msPerWeek);
+    // Remaining full days (after removing full weeks)
+    const days = Math.floor((deltaMs % msPerWeek) / msPerDay);
+
+    // For hh:mm:ss, use total hours (floor of total seconds / 3600), then minutes & seconds
+    const totalSeconds = Math.floor(deltaMs / 1000);
+    const totalHours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    const hh = String(totalHours).padStart(2, '0');
+    const mm = String(minutes).padStart(2, '0');
+    const ss = String(seconds).padStart(2, '0');
+
+    html += `<div style="font-size:14px;color:#222">残り ${weeks} 週</div>`;
+    html += `<div style="font-size:14px;color:#222">残り ${days} 日</div>`;
+    html += `<div style="font-size:16px;color:#111;font-weight:600">残り ${hh}:${mm}:${ss}</div>`;
+
+    // Subquest achievement fraction: checked toggles / number of categories
+    try {
+      const totalCats = (Array.isArray(categories) ? categories.length : 0) || 0;
+      let checked = 0;
+      if (typeof categorySubquests === 'object' && categorySubquests !== null) {
+        for (const k of Object.keys(categorySubquests)) {
+          if (categorySubquests[k] && categorySubquests[k].enabled) checked++;
+        }
+      }
+      const frac = totalCats > 0 ? `${checked}/${totalCats}` : `0/0`;
+      html += `<div style="margin-top:6px;font-size:13px;color:#444">サブクエスト達成: <strong>${frac}</strong></div>`;
+    } catch (e) {
+      /* ignore */
+    }
+
+    container.innerHTML = html;
   }
-  if (text) {
-    text.innerHTML = `残り週: <strong>${weeksLeft}</strong> 週 （経過 ${weeksLived}/${totalWeeks} 週）<br>体感残り週: <strong>${perceivedRemainingWeeks}</strong> 週・体感経過: <strong>${percentPassed}%</strong>`;
+
+  // Set up interval to update every second. Clear previous if present.
+  if (__remainingContainerIntervalId) {
+    clearInterval(__remainingContainerIntervalId);
+    __remainingContainerIntervalId = null;
   }
+  doUpdate();
+  __remainingContainerIntervalId = setInterval(doUpdate, 1000);
 }
 
 function saveBirthdayFromInput() {
