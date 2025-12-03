@@ -1023,8 +1023,10 @@ function updateChart() {
       ]
     },
     options: {
-      responsive: false,
-      maintainAspectRatio: false,
+      // Let Chart.js respond to the canvas/container size and keep a square aspect
+      responsive: true,
+      maintainAspectRatio: true,
+      aspectRatio: 1,
       scales: {
         r: {
           beginAtZero: true,
