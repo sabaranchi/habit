@@ -11,9 +11,6 @@ const statusNames = ["ATK", "DEF", "HP", "MP", "SPD"];
 // カテゴリとステータスを紐付け{カテゴリ名: ステータス名}
 let categoryToStatus = JSON.parse(localStorage.getItem("categoryToStatus")) || {};
 let categoryTargets = JSON.parse(localStorage.getItem("categoryTargets")) || {};
-// per-category quest and weekly-subquest storage
-let categoryQuests = JSON.parse(localStorage.getItem('categoryQuests')) || {};
-let categorySubquests = JSON.parse(localStorage.getItem('categorySubquests')) || {};
 // 例: { ATK: "体力", DEF: "防御力", HP: "体力", MP: "魔力", SPD: "敏捷" }
 let statMapping = JSON.parse(localStorage.getItem("statMapping")) || {}; 
 
@@ -36,6 +33,13 @@ let dailyLog = JSON.parse(localStorage.getItem("dailyLog")) || {};
 // missionPoints はミッション機能削除により基本使わないが、calculateStatus が参照するため安全な初期化
 let missionPoints = {};
 
+// quest/subquest 機能は廃止
+try {
+  localStorage.removeItem('categoryQuests');
+  localStorage.removeItem('categorySubquests');
+  localStorage.removeItem('lastSubquestDate');
+} catch (e) { /* ignore */ }
+
 function getCurrentWeek() {
   const date = new Date();
   const target = new Date(date.valueOf());
@@ -47,40 +51,33 @@ function getCurrentWeek() {
   return weekNumber;
 }
 
-// Reset only the subquest "enabled" toggles when the date changes (daily reset).
-function checkSubquestDateRollover() {
-  try {
-    // Use local date (YYYY-MM-DD) to avoid UTC offset issues around midnight
-    const dnow = new Date();
-    const pad = (n) => String(n).padStart(2, '0');
-    const today = `${dnow.getFullYear()}-${pad(dnow.getMonth()+1)}-${pad(dnow.getDate())}`;
-    const last = localStorage.getItem('lastSubquestDate');
-    if (!last) {
-      localStorage.setItem('lastSubquestDate', today);
-      return;
-    }
-    if (last !== today) {
-      // clear only the enabled/completed flags, preserve the text
-      let changed = false;
-      if (typeof categorySubquests === 'object' && categorySubquests !== null) {
-        for (const k of Object.keys(categorySubquests)) {
-          if (categorySubquests[k] && categorySubquests[k].enabled) {
-            categorySubquests[k].enabled = false;
-            changed = true;
-          }
-        }
-        if (changed) {
-          localStorage.setItem('categorySubquests', JSON.stringify(categorySubquests));
-        }
-      }
-      localStorage.setItem('lastSubquestDate', today);
-      console.log('日付が変わったためサブクエストの完了トグルをリセットしました');
-      // update UI if needed
-      try { if (changed) render(); } catch (e) { /* ignore */ }
-    }
-  } catch (e) {
-    console.warn('checkSubquestDateRollover failed', e);
+// local date helper (YYYY-MM-DD)
+function getLocalDateString() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// Daily pomodoro count management.
+const POMODORO_DAILY_COUNT_KEY = 'pomodoroDailyCount';
+const POMODORO_DAILY_DATE_KEY = 'pomodoroDailyDate';
+
+function ensurePomodoroDailyCounter() {
+  const today = getLocalDateString();
+  const savedDate = localStorage.getItem(POMODORO_DAILY_DATE_KEY);
+  if (savedDate !== today) {
+    localStorage.setItem(POMODORO_DAILY_DATE_KEY, today);
+    localStorage.setItem(POMODORO_DAILY_COUNT_KEY, '0');
+    return 0;
   }
+  return Number(localStorage.getItem(POMODORO_DAILY_COUNT_KEY) || 0);
+}
+
+function incrementPomodoroDailyCounter() {
+  const current = ensurePomodoroDailyCounter();
+  const next = current + 1;
+  localStorage.setItem(POMODORO_DAILY_COUNT_KEY, String(next));
+  return next;
 }
 
 // 指定日付の週番号を算出（getCurrentWeek と同じロジックを任意日付で使う）
@@ -112,9 +109,6 @@ function save() {
   localStorage.setItem("categoryTargets", JSON.stringify(categoryTargets));
   localStorage.setItem("playerLevel", playerLevel);
   localStorage.setItem("categoryToStatus", JSON.stringify(categoryToStatus)); // ← 追加
-  // save new quest/subquest data
-  localStorage.setItem('categoryQuests', JSON.stringify(categoryQuests));
-  localStorage.setItem('categorySubquests', JSON.stringify(categorySubquests));
 }
 
 
@@ -127,9 +121,6 @@ function addCategory() {
   categories.push(name);
   scores[name] = 0;
   statusPoints[name] = 0; // ステータス初期化
-  // initialize quest/subquest for this category
-  categoryQuests[name] = { text: '', enabled: false };
-  categorySubquests[name] = { text: '', enabled: false };
   // ミッション機能を削除したため初期化処理は不要
 
   input.value = "";
@@ -145,8 +136,6 @@ function deleteCategories() {
   for (let t of targets) {
     delete scores[t];
     delete statusPoints[t];
-    delete categoryQuests[t];
-    delete categorySubquests[t];
   }
   save();
   render();
@@ -215,17 +204,6 @@ function enableEdit(labelElement, oldName) {
       statusPoints[newName] = statusPoints[oldName];
       delete statusPoints[oldName];
     }
-      // transfer quest/subquest data when renaming a category
-      if (categoryQuests && categoryQuests[oldName] !== undefined) {
-        categoryQuests[newName] = categoryQuests[oldName];
-        delete categoryQuests[oldName];
-      }
-      if (categorySubquests && categorySubquests[oldName] !== undefined) {
-        categorySubquests[newName] = categorySubquests[oldName];
-        delete categorySubquests[oldName];
-      }
-
-
     save();
     render(); // ← ラベルに戻す
   };
@@ -320,58 +298,6 @@ function render() {
     div.append(scoreLabel, targetDisplay, buttonGroup);
     list.appendChild(div);
 
-    // quest row (indented, under category)
-    const questDiv = document.createElement('div');
-    questDiv.className = 'quest-row';
-    const questInput = document.createElement('input');
-    questInput.type = 'text';
-    questInput.placeholder = '目標を入力';
-    questInput.value = (categoryQuests[cat] && categoryQuests[cat].text) || '';
-  const questToggleWrap = document.createElement('label');
-  questToggleWrap.className = 'quest-toggle';
-  const questToggle = document.createElement('input');
-  questToggle.type = 'checkbox';
-  questToggle.checked = !!(categoryQuests[cat] && categoryQuests[cat].enabled);
-  // accessibility label only; no visible text
-  questToggle.setAttribute('aria-label', '目標達成');
-  questToggleWrap.appendChild(questToggle);
-    questInput.addEventListener('change', () => {
-      categoryQuests[cat] = { text: questInput.value, enabled: !!questToggle.checked };
-      save();
-    });
-    questToggle.addEventListener('change', () => {
-      categoryQuests[cat] = { text: questInput.value, enabled: !!questToggle.checked };
-      save();
-    });
-    questDiv.appendChild(questInput);
-    questDiv.appendChild(questToggleWrap);
-    list.appendChild(questDiv);
-
-    // weekly subquest row (indented, under quest)
-    const subDiv = document.createElement('div');
-    subDiv.className = 'subquest-row';
-  const subInput = document.createElement('input');
-  subInput.type = 'text';
-  subInput.placeholder = '毎日やることを入力';
-    subInput.value = (categorySubquests[cat] && categorySubquests[cat].text) || '';
-  const subToggleWrap = document.createElement('label');
-  subToggleWrap.className = 'subquest-toggle';
-  const subToggle = document.createElement('input');
-  subToggle.type = 'checkbox';
-  subToggle.checked = !!(categorySubquests[cat] && categorySubquests[cat].enabled);
-  subToggle.setAttribute('aria-label', '小目標達成');
-  subToggleWrap.appendChild(subToggle);
-    subInput.addEventListener('change', () => {
-      categorySubquests[cat] = { text: subInput.value, enabled: !!subToggle.checked };
-      save();
-    });
-    subToggle.addEventListener('change', () => {
-      categorySubquests[cat] = { text: subInput.value, enabled: !!subToggle.checked };
-      save();
-    });
-    subDiv.appendChild(subInput);
-    subDiv.appendChild(subToggleWrap);
-    list.appendChild(subDiv);
   }
 
   function renderCalendar() {
@@ -1142,20 +1068,18 @@ document.addEventListener('DOMContentLoaded', () => {
       // rehydrate
       pomodoroState = saved;
       if (pomodoroState.endTS) pomodoroState.endTS = Number(pomodoroState.endTS);
-      if (pomodoroState.stopwatchStartTS) pomodoroState.stopwatchStartTS = Number(pomodoroState.stopwatchStartTS);
 
       // show overlay and apply phase styling
       showFixedPomodoroOverlay(pomodoroState.cat);
       const modal = document.querySelector('#pomodoroOverlay .modal');
       if (modal) {
-        modal.classList.remove('phase-five','phase-stopwatch','phase-break');
+        modal.classList.remove('phase-five','phase-break');
         modal.classList.add('phase-' + (pomodoroState.phase || 'five'));
       }
 
       // adjust close button label/state
       const closeBtn = document.getElementById('pomodoroClose');
-      if (pomodoroState.phase === 'stopwatch' && closeBtn) closeBtn.textContent = '終了';
-      if (pomodoroState.phase === 'break' && closeBtn) { closeBtn.textContent = '休憩中'; closeBtn.disabled = true; }
+      if (closeBtn) closeBtn.textContent = '中断';
 
       // start ticking unless paused
       if (pomodoroTimer) clearInterval(pomodoroTimer);
@@ -1182,9 +1106,8 @@ document.addEventListener('DOMContentLoaded', () => {
       if (saveBirthdayBtn) saveBirthdayBtn.addEventListener('click', saveBirthdayFromInput);
       // initial render
       updateRemainingWeeks();
-      // daily subquest toggle rollover check: run once on load and then periodically
-      try { checkSubquestDateRollover(); } catch (e) { /* ignore */ }
-      setInterval(() => { try { checkSubquestDateRollover(); } catch (e) { /* ignore */ } }, 60 * 1000);
+      // Ensure daily pomodoro counter date is initialized/reset on load
+      try { ensurePomodoroDailyCounter(); } catch (e) { /* ignore */ }
     } catch (e) { /* ignore */ }
 });
 
@@ -1243,8 +1166,8 @@ function restoreActivePomodoroFromStorage() {
 function schedulePomodoroNotifications(state) {
   if (!state) return;
   // Only schedule notifications for future events we care about:
-  // - end of the initial 5-minute phase (transition to stopwatch)
-  // - end of a break (notify user break finished)
+  // - end of work phase
+  // - end of break phase
   try {
     ensureNotificationPermission().then((granted) => {
       if (!granted) return;
@@ -1286,13 +1209,12 @@ function schedulePomodoroNotifications(state) {
         };
 
         // schedule based on state phase
-        if (state.phase === 'five' && state.endTS) {
-          trySchedule(Number(state.endTS), '作業5分完了', `${state.cat} の5分が経過しました。ストップウォッチへ移行します。`, 'pomodoro-five-' + (state.cat || ''));
+        if (state.phase === 'work' && state.endTS) {
+          trySchedule(Number(state.endTS), '作業終了', `${state.cat} の25分作業が終了しました。休憩に移ります。`, 'pomodoro-work-' + (state.cat || ''));
         }
         if (state.phase === 'break' && state.endTS) {
           trySchedule(Number(state.endTS), '休憩終了', `${state.cat} の休憩が終了しました。`, 'pomodoro-break-' + (state.cat || ''));
         }
-        // For stopwatch phase there is no deterministic end until user stops; nothing to schedule.
       }).catch((e) => { console.warn('getRegistration failed', e); });
     });
   } catch (e) {
@@ -1347,7 +1269,7 @@ function updateRemainingWeeks() {
   const drawerDisplay = document.getElementById('remainingWeeksDisplay');
   if (drawerDisplay) drawerDisplay.innerHTML = `残り週: <strong>${weeksLeft}</strong> 週 （経過 ${weeksLived}/${totalWeeks} 週・${pct}%）`;
 
-   // Update the new top-area remainingContainer with weeks/days/hours and subquest fraction
+   // Update the new top-area remainingContainer with weeks/days/hours
   try { renderRemainingContainer(end); } catch (e) { /* ignore */ }
 }
 
@@ -1421,21 +1343,6 @@ function renderRemainingContainer(endDate) {
     html += `<div style="font-size:14px;color:#222">残り ${days} 日</div>`;
     html += `<div style="font-size:16px;color:#111;font-weight:600">残り ${hh}:${mm}:${ss}</div>`;
 
-    // Subquest achievement fraction: checked toggles / number of categories
-    try {
-      const totalCats = (Array.isArray(categories) ? categories.length : 0) || 0;
-      let checked = 0;
-      if (typeof categorySubquests === 'object' && categorySubquests !== null) {
-        for (const k of Object.keys(categorySubquests)) {
-          if (categorySubquests[k] && categorySubquests[k].enabled) checked++;
-        }
-      }
-      const frac = totalCats > 0 ? `${checked}/${totalCats}` : `0/0`;
-      html += `<div style="margin-top:6px;font-size:13px;color:#444">サブクエスト達成: <strong>${frac}</strong></div>`;
-    } catch (e) {
-      /* ignore */
-    }
-
     container.innerHTML = html;
   }
 
@@ -1496,18 +1403,22 @@ function startPomodoroForCategory(cat, pOption) {
   showGlobalTimerUI(cat, p, pOption && pOption.pointsToGrant ? pOption.pointsToGrant : 1);
 }
 
-// ＋ボタン押下時の選択ダイアログ（5分刻み: 5,10,15,20,25）
-// New fixed flow: 5-minute fixed timer -> stopwatch -> break (1/5 of stopwatch)
+// ＋ボタン押下時: 25分作業 -> 休憩(通常5分 / 4回ごと30分)
 function startFiveMinutePomodoro(cat) {
   if (pomodoroTimer) return alert('既にタイマーが動作中です');
+
+  const dailyCount = ensurePomodoroDailyCounter();
+  const nextRunNumber = dailyCount + 1;
+  const breakMinutes = (nextRunNumber % 4 === 0) ? 30 : 5;
 
   // setup state
   const now = Date.now();
   pomodoroState = {
     cat,
-    phase: 'five', // 'five' | 'stopwatch' | 'break'
-    endTS: now + 5 * 60 * 1000,
-    stopwatchStartTS: null,
+    phase: 'work', // 'work' | 'break'
+    endTS: now + 25 * 60 * 1000,
+    breakMinutes,
+    runNumber: nextRunNumber,
   };
 
   // persist immediately so reloads can restore
@@ -1526,7 +1437,7 @@ function tickFixedPomodoro() {
   const clock = document.getElementById('pomodoroClock');
   const closeBtn = document.getElementById('pomodoroClose');
 
-  if (pomodoroState.phase === 'five') {
+  if (pomodoroState.phase === 'work') {
     let remaining = Math.ceil((pomodoroState.endTS - now) / 1000);
     if (remaining < 0) remaining = 0;
     const mm = Math.floor(remaining / 60);
@@ -1534,37 +1445,21 @@ function tickFixedPomodoro() {
     if (clock) clock.textContent = `${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
 
     if (remaining <= 0) {
-  // transition to stopwatch that starts at 5:00 (and continues counting even if the
-  // transition happened while the app was closed). Use the stored endTS if
-  // available so elapsed includes time passed since end.
-  playBeep();
-  sendNotification('作業5分完了', `${pomodoroState.cat} の5分が経過しました。ストップウォッチを開始します。`);
-  pomodoroState.phase = 'stopwatch';
-  // If endTS is in the past (e.g. app was closed and reopened), use that
-  // timestamp so the stopwatch reflects time passed since the 5-minute mark.
-  const transitionTime = (pomodoroState.endTS && Number(pomodoroState.endTS)) || Date.now();
-  // stopwatchStartTS is set so that elapsed = now - stopwatchStartTS = 300 + (now - transitionTime)
-  pomodoroState.stopwatchStartTS = Number(transitionTime) - 5 * 60 * 1000;
-      if (closeBtn) closeBtn.textContent = '終了';
-      // update overlay style to stopwatch phase
+      playBeep();
+      sendNotification('作業終了', `${pomodoroState.cat} の25分作業が終了しました。休憩を開始します。`);
+      pomodoroState.phase = 'break';
+      const breakSec = (Number(pomodoroState.breakMinutes) || 5) * 60;
+      pomodoroState.endTS = Date.now() + breakSec * 1000;
+
+      if (closeBtn) closeBtn.textContent = '中断';
       const modal = document.querySelector('#pomodoroOverlay .modal');
       if (modal) {
         modal.classList.remove('phase-five');
-        modal.classList.add('phase-stopwatch');
+        modal.classList.add('phase-break');
       }
-      // show 05:00 immediately (tick will update next second)
-      if (clock) clock.textContent = '05:00';
-      // persist transition
+
       persistActivePomodoro();
     }
-    return;
-  }
-
-  if (pomodoroState.phase === 'stopwatch') {
-    const elapsed = Math.floor((now - (pomodoroState.stopwatchStartTS || now)) / 1000);
-    const mm = Math.floor(elapsed / 60);
-    const ss = elapsed % 60;
-    if (clock) clock.textContent = `${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
     return;
   }
 
@@ -1578,6 +1473,8 @@ function tickFixedPomodoro() {
     if (remaining <= 0) {
       playBeep();
       sendNotification('休憩終了', `${pomodoroState.cat} の休憩が終了しました。`);
+      // count one completed pomodoro at the end of break
+      incrementPomodoroDailyCounter();
       clearInterval(pomodoroTimer);
       pomodoroTimer = null;
       pomodoroState = null;
@@ -1609,7 +1506,7 @@ function showFixedPomodoroOverlay(cat) {
   modal.classList.add('phase-five');
   modal.innerHTML = `
     <div class="pomodoro-timer global">
-      <div class="pomodoro-clock" id="pomodoroClock">05:00</div>
+      <div class="pomodoro-clock" id="pomodoroClock">25:00</div>
       <div class="pomodoro-controls">
         <button id="pomodoroClose">中断</button>
       </div>
@@ -1624,45 +1521,12 @@ function showFixedPomodoroOverlay(cat) {
     closeBtn.focus();
     closeBtn.onclick = () => {
       if (!pomodoroState) return hideOverlay();
-      // if still in initial 5-minute phase, treat as interrupt -> no points
-      if (pomodoroState.phase === 'five') {
-        clearInterval(pomodoroTimer);
-        pomodoroTimer = null;
-        pomodoroState = null;
-        clearActivePomodoroStorage();
-        hideOverlay();
-        render();
-        return;
-      }
-
-      // if in stopwatch phase, this button acts as "終了"
-      if (pomodoroState.phase === 'stopwatch') {
-        const now = Date.now();
-        const elapsed = Math.floor((now - (pomodoroState.stopwatchStartTS || now)) / 1000);
-        const minutes = Math.floor(elapsed / 60); // 切り捨てで1分につき1ポイント
-        if (minutes > 0) updateScore(pomodoroState.cat, minutes);
-
-        // start break: 1/5 of stopwatch time (seconds), minimum 60s
-        const breakSec = Math.max(60, Math.floor(elapsed / 5));
-        pomodoroState.phase = 'break';
-        pomodoroState.endTS = Date.now() + breakSec * 1000;
-        // attempt to schedule a notification for break end
-        try { scheduleBreakEndNotification(pomodoroState.endTS, pomodoroState.cat); } catch(e) { /* ignore */ }
-        // change button to indicate休憩中 and disable; update modal style
-        closeBtn.textContent = '休憩中';
-        closeBtn.disabled = true;
-        const modal = document.querySelector('#pomodoroOverlay .modal');
-        if (modal) {
-          modal.classList.remove('phase-stopwatch');
-          modal.classList.add('phase-break');
-        }
-        // persist break state
-        persistActivePomodoro();
-        // ensure timer keeps ticking
-        return;
-      }
-
-      // if in break phase, ignore clicks (button should be disabled)
+      clearInterval(pomodoroTimer);
+      pomodoroTimer = null;
+      pomodoroState = null;
+      clearActivePomodoroStorage();
+      hideOverlay();
+      render();
     };
   }
 
